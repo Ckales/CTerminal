@@ -50,6 +50,20 @@ abstract final class WindowControl {
     exit(0);
   }
 
+  /// 原生打开面板，多选文件（ZMODEM 上传用）；取消或原生侧不支持时返回空列表
+  static Future<List<String>> pickFiles() async {
+    try {
+      final paths = await channel.invokeListMethod<String>('pickFiles');
+      return paths ?? const [];
+    } on MissingPluginException catch (error) {
+      debugPrint('打开文件面板失败：$error');
+      return const [];
+    } on PlatformException catch (error) {
+      debugPrint('打开文件面板失败：$error');
+      return const [];
+    }
+  }
+
   /// Flutter 桌面多窗口尚未稳定：新窗口 = 新进程
   static void newWindow() {
     if (_mac) {

@@ -28,12 +28,15 @@ CTerminal 是一款跨平台桌面终端，不基于 Electron：界面用 Flutte
 - 本地 shell 自动探测（macOS 读 /etc/shells；Windows 探测 CMD、PowerShell、pwsh、Git-Bash、MSYS2、Cygwin、WSL）
 - SSH：密码 / 私钥（含加密私钥）/ ssh-agent / 键盘交互、known_hosts 校验与密钥变更警告、跳板机、本地 / 远程 / 动态（SOCKS5）端口转发、agent 转发、保活、登录脚本
 - SFTP 文件面板：浏览、拖入上传（含文件夹）、双击下载、重命名、新建文件夹、删除
+- ZMODEM：终端里运行 `sz` 自动接收到“下载”文件夹（重名加序号），运行 `rz` 弹出文件面板上传；本地 shell / SSH / Telnet / 串口都可用，Ctrl-C 取消
 - 自动导入 `~/.ssh/config` 中的主机
 - Telnet、串口（波特率 / 数据位 / 校验 / 流控 / 换行 / 本地回显）
 - 配置选择器：分组、筛选、最近使用，输入 `user@host:port` 直接快速连接
 - 会话结束时的行为：正常退出关闭、出错保留、自动重连
 
 **界面语言**：简体中文 / English，默认跟随系统
+
+**新版本检查**：启动时检查 GitHub 发布（每天最多一次，可在设置里关闭），有新版时标签栏右侧出现提示
 
 **设置**（以标签页打开）
 - 应用、外观（主题、标签栏位置、透明度、缩放、字体）、配色方案（10 套内置 + 自定义编辑器）、终端、配置和连接、快捷键（全部可改）、SSH、凭据、配置文件
@@ -116,6 +119,30 @@ app/rust/            flutter_rust_bridge 薄包装
 app/lib/             Flutter 界面
 app/test/            Dart 测试
 ```
+
+## 发布
+
+推送与版本号一致的标签（如 `v0.1.0`，须与 `app/pubspec.yaml`、`crates/cterm-core/Cargo.toml` 一致，否则流水线失败）后，`.github/workflows/release.yml` 会构建 macOS 通用版 DMG 与 Windows zip，并创建 GitHub Release 草稿。本地打包：
+
+```bash
+cd app && flutter build macos --release && cd ..
+sh app/tool/package_macos.sh app/build/macos/Build/Products/Release/CTerminal.app dist
+```
+
+签名与公证需要在仓库的 GitHub Secrets 中配置下列项。缺少时流水线仍会产出 ad-hoc 签名、未公证的包：
+
+| Secret | 用途 |
+| --- | --- |
+| `MACOS_CERTIFICATE_P12` | Developer ID Application 证书（含私钥）导出的 .p12，base64 编码 |
+| `MACOS_CERTIFICATE_PASSWORD` | 上述 .p12 的导出密码 |
+| `APPLE_API_KEY` | App Store Connect API 密钥（.p8 文件内容），用于公证 |
+| `APPLE_API_KEY_ID` | 上述 API 密钥的 Key ID |
+| `APPLE_API_ISSUER` | 上述 API 密钥的 Issuer ID |
+| `APPLE_ID` | 不用 API 密钥时的公证方式：Apple ID |
+| `APPLE_TEAM_ID` | 同上：开发者团队 ID |
+| `APPLE_APP_PASSWORD` | 同上：Apple ID 的 App 专用密码 |
+
+公证凭据二选一：API 密钥三项齐全时优先使用，否则使用 Apple ID 三项。
 
 ## 参与贡献
 

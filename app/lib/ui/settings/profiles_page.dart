@@ -187,17 +187,21 @@ class _ProfilesPageState extends State<ProfilesPage> {
     return Container(
       margin: const EdgeInsets.only(bottom: 4),
       decoration: BoxDecoration(color: colors.surfaceRaised, borderRadius: BorderRadius.circular(4), border: Border.all(color: colors.border)),
-      child: ListTile(
-        dense: true,
-        leading: Icon(profileIcon(profile), size: 18, color: color ?? colors.textDim),
-        title: Text(profile['name'] as String, style: TextStyle(fontSize: 13, color: colors.text)),
-        subtitle: Text(profileDescription(profile), style: TextStyle(fontSize: 11.5, color: colors.textDim)),
-        onTap: builtin ? null : () => setState(() => _editing = _deepCopy(profile)),
-        trailing: Row(mainAxisSize: MainAxisSize.min, children: [
-          IconButton(tooltip: tr('在新标签页打开'), iconSize: 16, icon: const Icon(Icons.play_arrow_outlined), onPressed: () => app.newTab(profile: profile)),
-          IconButton(tooltip: tr(builtin ? '复制为新配置后可编辑' : '复制'), iconSize: 16, icon: const Icon(Icons.copy_outlined), onPressed: () => _duplicate(profile)),
-          if (!builtin) IconButton(tooltip: tr('编辑'), iconSize: 16, icon: const Icon(Icons.edit_outlined), onPressed: () => setState(() => _editing = _deepCopy(profile))),
-        ]),
+      // ListTile 的悬停 / 水波纹画在最近的 Material 上，不包一层会被上面的背景色盖住
+      child: Material(
+        type: MaterialType.transparency,
+        child: ListTile(
+          dense: true,
+          leading: Icon(profileIcon(profile), size: 18, color: color ?? colors.textDim),
+          title: Text(profile['name'] as String, style: TextStyle(fontSize: 13, color: colors.text)),
+          subtitle: Text(profileDescription(profile), style: TextStyle(fontSize: 11.5, color: colors.textDim)),
+          onTap: builtin ? null : () => setState(() => _editing = _deepCopy(profile)),
+          trailing: Row(mainAxisSize: MainAxisSize.min, children: [
+            IconButton(tooltip: tr('在新标签页打开'), iconSize: 16, icon: const Icon(Icons.play_arrow_outlined), onPressed: () => app.newTab(profile: profile)),
+            IconButton(tooltip: tr(builtin ? '复制为新配置后可编辑' : '复制'), iconSize: 16, icon: const Icon(Icons.copy_outlined), onPressed: () => _duplicate(profile)),
+            if (!builtin) IconButton(tooltip: tr('编辑'), iconSize: 16, icon: const Icon(Icons.edit_outlined), onPressed: () => setState(() => _editing = _deepCopy(profile))),
+          ]),
+        ),
       ),
     );
   }
@@ -482,6 +486,7 @@ class _ProfileEditorState extends State<ProfileEditor> {
         _text('端口', 'port', number: true, width: 100),
         _text('用户名', 'user', hint: '留空则连接时询问'),
         _dropdown('跳板机', 'jumpHost', jumpHosts),
+        _text('代理命令', 'proxyCommand', hint: 'ssh -W %h:%p bastion.example.com', help: 'ProxyCommand：经由此命令的输入输出连接，%h 主机、%p 端口、%r 用户；设置了跳板机时以跳板机为准'),
       ]),
       SettingsSection(title: '认证', children: [
         _dropdown('方式', 'auth', {

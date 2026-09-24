@@ -2,6 +2,7 @@
 
 #include <flutter/standard_method_codec.h>
 #include <shellapi.h>
+#include <shobjidl.h>
 
 #include <cstdlib>
 #include <optional>
@@ -99,6 +100,44 @@ UINT VirtualKeyFor(const std::string& key) {
   return 0;
 }
 
+std::string Utf8(const wchar_t* wide) {
+  int size = WideCharToMultiByte(CP_UTF8, 0, wide, -1, nullptr, 0, nullptr, nullptr);
+  if (size <= 1) return std::string();
+  std::string utf8(size - 1, '\0');
+  WideCharToMultiByte(CP_UTF8, 0, wide, -1, utf8.data(), size, nullptr, nullptr);
+  return utf8;
+}
+
+// ZMODEM 上传（远端 rz 在等）：系统打开对话框，多选文件；取消返回空列表
+flutter::EncodableList PickFiles(HWND owner) {
+  flutter::EncodableList paths;
+  IFileOpenDialog* dialog = nullptr;
+  if (FAILED(CoCreateInstance(CLSID_FileOpenDialog, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&dialog)))) {
+    return paths;
+  }
+  DWORD options = 0;
+  dialog->GetOptions(&options);
+  dialog->SetOptions(options | FOS_ALLOWMULTISELECT | FOS_FORCEFILESYSTEM | FOS_FILEMUSTEXIST);
+  IShellItemArray* items = nullptr;
+  if (SUCCEEDED(dialog->Show(owner)) && SUCCEEDED(dialog->GetResults(&items))) {
+    DWORD count = 0;
+    items->GetCount(&count);
+    for (DWORD index = 0; index < count; index++) {
+      IShellItem* item = nullptr;
+      if (FAILED(items->GetItemAt(index, &item))) continue;
+      PWSTR path = nullptr;
+      if (SUCCEEDED(item->GetDisplayName(SIGDN_FILESYSPATH, &path))) {
+        paths.push_back(flutter::EncodableValue(Utf8(path)));
+        CoTaskMemFree(path);
+      }
+      item->Release();
+    }
+    items->Release();
+  }
+  dialog->Release();
+  return paths;
+}
+
 bool FlagOf(const flutter::EncodableMap& map, const char* name) {
   auto found = map.find(flutter::EncodableValue(name));
   if (found == map.end()) return false;
@@ -127,6 +166,10 @@ void FlutterWindow::HandleWindowCall(const flutter::MethodCall<flutter::Encodabl
       }
     }
     result->Success();
+    return;
+  }
+  if (call.method_name() == "pickFiles") {
+    result->Success(flutter::EncodableValue(PickFiles(GetHandle())));
     return;
   }
   if (call.method_name() == "toggleFullScreen") {

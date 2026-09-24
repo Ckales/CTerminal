@@ -19,6 +19,8 @@ sealed class AppTab {
   final String key = 'tab-${_tabCounter++}';
   String customTitle = '';
   String color = '';
+  /// 固定的标签页排在最左、标签栏里只显示图标，“关闭其他”不会关掉它，单独关闭要确认
+  bool pinned = false;
 
   String get title;
 }
@@ -88,7 +90,14 @@ class AppState extends ChangeNotifier {
   Future<void> Function()? showProfileSelector;
   Future<void> Function()? showCommandPalette;
   Future<void> Function(String title, String initial, void Function(String) onDone)? showRenameDialog;
+  /// 关闭固定的标签页前确认，由界面层注册
+  Future<bool> Function(AppTab tab)? confirmClosePinned;
   final ValueNotifier<int> searchRequest = ValueNotifier(0);
+  /// 同时输入到所有标签页（每个标签页的当前窗格；开了窗格广播的标签页是它的所有窗格）
+  bool broadcastAllTabs = false;
+  /// toggle-last-tab 用：当前和上一次激活的标签页
+  AppTab? _currentTab;
+  AppTab? _lastTab;
   Timer? _saveStateTimer;
 
   AppTab? get activeTab => tabs.isEmpty ? null : tabs[activeIndex.clamp(0, tabs.length - 1)];
@@ -104,17 +113,20 @@ class AppState extends ChangeNotifier {
   TerminalMetrics? _metrics;
   TerminalMetrics get metrics {
     final size = ((terminal['fontSize'] as num).toDouble() + fontSizeDelta).clamp(6.0, 72.0);
+    final ligatures = terminal['ligatures'] == true;
     final candidate = _metrics;
     if (candidate != null &&
         candidate.fontFamily == terminal['font'] &&
         candidate.fontSize == size &&
-        candidate.lineHeight == (terminal['lineHeight'] as num).toDouble()) {
+        candidate.lineHeight == (terminal['lineHeight'] as num).toDouble() &&
+        candidate.ligatures == ligatures) {
       return candidate;
     }
     return _metrics = TerminalMetrics(
       fontFamily: terminal['font'] as String,
       fontSize: size,
       lineHeight: (terminal['lineHeight'] as num).toDouble(),
+      ligatures: ligatures,
     );
   }
 
@@ -261,7 +273,7 @@ class AppState extends ChangeNotifier {
     final index = tabs.indexOf(keep);
     final victims = <AppTab>[];
     for (var i = 0; i < tabs.length; i++) {
-      if (i == index) continue;
+      if (i == index || tabs[i].pinned) continue;
       if (onlyRight && i < index) continue;
       if (onlyLeft && i > index) continue;
       victims.add(tabs[i]);
@@ -270,6 +282,25 @@ class AppState extends ChangeNotifier {
       closeTab(tab);
     }
     activeIndex = tabs.indexOf(keep);
+    _changed();
+  }
+
+  /// 用户主动关闭标签页（快捷键、关闭按钮、中键、右键菜单）：固定的标签页先确认
+  Future<void> requestCloseTab(AppTab tab) async {
+    if (tab.pinned) {
+      final confirmed = await confirmClosePinned?.call(tab) ?? true;
+      if (!confirmed) return;
+    }
+    closeTab(tab);
+  }
+
+  /// 固定 / 取消固定：固定时排到已固定标签页的末尾，取消时排到未固定标签页的最前
+  void togglePin(AppTab tab) {
+    final active = activeTab;
+    tab.pinned = !tab.pinned;
+    tabs.remove(tab);
+    tabs.insert(tabs.where((other) => other.pinned).length, tab);
+    activeIndex = active == null ? 0 : tabs.indexOf(active);
     _changed();
   }
 
@@ -476,6 +507,21 @@ class AppState extends ChangeNotifier {
       if (index != null) selectTab(index - 1);
       return true;
     }
+    if (action.startsWith(profileHotkeyPrefix)) {
+      final id = action.substring(profileHotkeyPrefix.length);
+      final profile = profiles.where((profile) => profile['id'] == id).firstOrNull;
+      if (profile == null) return false;
+      newTab(profile: profile);
+      return true;
+    }
+    final paneNumber = RegExp(r'^pane-nav-(\d)$').firstMatch(action);
+    if (paneNumber != null) {
+      if (tab is! TerminalTab) return false;
+      final index = int.parse(paneNumber.group(1)!) - 1;
+      if (index >= tab.sessions.length) return false;
+      focusPane(tab, tab.sessions[index]);
+      return true;
+    }
     switch (action) {
       case 'new-tab':
         newTab();
@@ -484,7 +530,13 @@ class AppState extends ChangeNotifier {
       case 'settings':
         openSettings();
       case 'close-tab':
-        if (tab != null) closeTab(tab);
+        if (tab != null) requestCloseTab(tab);
+      case 'pin-tab':
+        if (tab != null) togglePin(tab);
+      case 'toggle-last-tab':
+        final last = _lastTab;
+        if (last == null || !tabs.contains(last)) return false;
+        selectTab(tabs.indexOf(last));
       case 'reopen-tab':
         reopenClosedTab();
       case 'rename-tab':
@@ -565,8 +617,16 @@ class AppState extends ChangeNotifier {
           tab.broadcast = !tab.broadcast;
           notifyListeners();
         }
+      case 'focus-all-tabs':
+        broadcastAllTabs = !broadcastAllTabs;
+        notifyListeners();
       case 'restart-tab' || 'reconnect-tab':
         if (session != null) restartSession(session);
+      case 'restart-ssh-session' || 'restart-telnet-session' || 'restart-serial-session':
+        // 只重启对应类型的会话：restart-ssh-session → ssh
+        final type = action.split('-')[1];
+        if (session == null || session.profileType != type) return false;
+        restartSession(session);
       case 'open-sftp':
         if (session == null || session.profileType != 'ssh') return false;
         session.sftpVisible = !session.sftpVisible;
@@ -580,6 +640,21 @@ class AppState extends ChangeNotifier {
         final text = termSelectionText(id: session.id);
         if (text == null) return false;
         Clipboard.setData(ClipboardData(text: text));
+      case 'ctrl-c':
+        if (session == null || !session.started) return false;
+        final text = termSelectionText(id: session.id);
+        if (text == null) {
+          sendInput(const [0x03]);
+          return true;
+        }
+        Clipboard.setData(ClipboardData(text: text));
+        termSelectClear(id: session.id);
+        session.refresh();
+      case 'copy-current-path':
+        if (session == null || !session.started) return false;
+        final path = termCwd(id: session.id);
+        if (path.isEmpty) return false;
+        Clipboard.setData(ClipboardData(text: path));
       case 'paste':
         if (session == null || !session.started) return false;
         pasteClipboard();
@@ -603,10 +678,20 @@ class AppState extends ChangeNotifier {
     return true;
   }
 
-  /// 当前窗格（广播模式下为标签页里所有窗格）
+  /// 当前窗格（广播模式下为标签页里所有窗格，所有标签页广播时再加上其他标签页）
   List<TerminalSession> inputTargets() {
     final tab = activeTab;
     if (tab is! TerminalTab) return [];
+    if (broadcastAllTabs) {
+      final targets = <TerminalSession>[];
+      for (final other in tabs.whereType<TerminalTab>()) {
+        final panes = other.broadcast ? other.sessions : [other.focused];
+        for (final session in panes) {
+          if (session.started && !session.exited) targets.add(session);
+        }
+      }
+      return targets;
+    }
     if (tab.broadcast) return tab.sessions.where((session) => session.started && !session.exited).toList();
     return [tab.focused];
   }
@@ -664,15 +749,41 @@ class AppState extends ChangeNotifier {
   // ---------- 状态保存 / 恢复 ----------
 
   void _changed() {
+    _keepPinnedFirst();
+    _trackActiveTab();
     notifyListeners();
     _saveStateTimer?.cancel();
     _saveStateTimer = Timer(const Duration(seconds: 1), saveState);
   }
 
+  /// 各处插入 / 拖动标签页后统一归位：固定的在前（保持各自相对顺序），当前标签页不变
+  void _keepPinnedFirst() {
+    final pinned = tabs.where((tab) => tab.pinned).toList();
+    if (pinned.isEmpty) return;
+    final ordered = [...pinned, ...tabs.where((tab) => !tab.pinned)];
+    var same = true;
+    for (var i = 0; i < tabs.length; i++) {
+      if (tabs[i] != ordered[i]) same = false;
+    }
+    if (same) return;
+    final active = activeTab;
+    tabs
+      ..clear()
+      ..addAll(ordered);
+    activeIndex = active == null ? 0 : tabs.indexOf(active);
+  }
+
+  void _trackActiveTab() {
+    final active = activeTab;
+    if (active == _currentTab) return;
+    _lastTab = _currentTab;
+    _currentTab = active;
+  }
+
   Future<void> saveState() async {
     final layouts = [
       for (final tab in tabs)
-        if (tab is TerminalTab) {'layout': _serializeNode(tab.tree.root), 'title': tab.customTitle, 'color': tab.color},
+        if (tab is TerminalTab) {'layout': _serializeNode(tab.tree.root), 'title': tab.customTitle, 'color': tab.color, 'pinned': tab.pinned},
     ];
     await rust.stateSave(json: jsonEncode({'tabs': layouts}));
   }
@@ -688,6 +799,7 @@ class AppState extends ChangeNotifier {
         if (tab == null) continue;
         tab.customTitle = map['title'] as String? ?? '';
         tab.color = map['color'] as String? ?? '';
+        tab.pinned = map['pinned'] == true;
         tabs.add(tab);
       }
     } on FormatException catch (error) {

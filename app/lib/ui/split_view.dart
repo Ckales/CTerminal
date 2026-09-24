@@ -62,7 +62,7 @@ class SplitView extends StatelessWidget {
               },
             ),
           ),
-        if (tab.broadcast)
+        if (tab.broadcast || (app.broadcastAllTabs && focused))
           Positioned(
             top: 4,
             left: 4,
@@ -70,7 +70,7 @@ class SplitView extends StatelessWidget {
               child: Container(
                 padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                 decoration: BoxDecoration(color: colors.danger.withValues(alpha: 0.8), borderRadius: BorderRadius.circular(3)),
-                child: Text(tr('广播输入'), style: TextStyle(fontSize: 11, color: Colors.white)),
+                child: Text(tr(app.broadcastAllTabs ? '广播到所有标签页' : '广播输入'), style: TextStyle(fontSize: 11, color: Colors.white)),
               ),
             ),
           ),

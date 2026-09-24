@@ -81,6 +81,13 @@ class _CTerminalAppState extends State<CTerminalApp> with WidgetsBindingObserver
       final value = await showTextPrompt(navigatorContext(), title: title, initial: initial);
       if (value != null) onDone(value.trim());
     };
+    app.confirmClosePinned = (tab) => showConfirm(
+          navigatorContext(),
+          title: '关闭固定的标签页？',
+          message: tr('「{title}」已固定，确定要关闭吗？', {'title': tab.title}),
+          confirm: '关闭',
+          danger: true,
+        );
     app.confirmMultilinePaste = (text) => showConfirm(
           navigatorContext(),
           title: '粘贴多行内容？',
@@ -104,7 +111,7 @@ class _CTerminalAppState extends State<CTerminalApp> with WidgetsBindingObserver
     final error = widget.configError;
     if (error != null) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        showConfirm(navigatorContext(), title: '配置文件有误', message: tr('{error}\n\n本次使用默认设置运行，原文件未被修改。', {'error': error}), confirm: '知道了');
+        showConfirm(navigatorContext(), title: '配置文件有误', message: tr('{error}\n\n本次使用默认设置运行，原文件未被修改；修改设置时会先把原文件备份到同目录。', {'error': error}), confirm: '知道了');
       });
     }
   }

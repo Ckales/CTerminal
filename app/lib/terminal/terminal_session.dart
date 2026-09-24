@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 
 import '../src/rust/api/terminal.dart';
+import '../window_control.dart';
 
 /// 一个终端窗格背后的会话。帧在 vsync 时才拉取：Rust 端的 wakeup 在拉取前只发一次，
 /// 所以 `cat` 大文件时最多每帧拉一次，不会被通知淹没。
@@ -85,7 +86,18 @@ class TerminalSession extends ChangeNotifier {
       case 'exit':
         _scheduleFrame();
         _markExited(event.text);
+      case 'zmodem-upload':
+        _pickZmodemUpload();
     }
+  }
+
+  /// 远端 rz 在等上传：弹原生文件面板，选中的文件交给 Rust；取消（空列表）会向远端发送取消序列
+  Future<void> _pickZmodemUpload() async {
+    final id = _id;
+    final paths = await WindowControl.pickFiles();
+    // 选择期间会话被重启 / 关闭了
+    if (_id != id) return;
+    termZmodemUpload(id: id, paths: paths);
   }
 
   void _markExited(String reason) {

@@ -174,12 +174,19 @@ Hotkey? hotkeyFromEvent(KeyEvent event) {
 /// 动作的显示名（已按界面语言翻译）
 String actionName(String id) {
   if (id.startsWith('tab-')) return tr('切换到标签页 {n}', {'n': id.substring(4)});
+  final pane = RegExp(r'^pane-nav-(\d)$').firstMatch(id);
+  if (pane != null) return tr('聚焦第 {n} 个窗格', {'n': pane.group(1)});
   return tr(hotkeyActionNames[id] ?? id);
 }
 
+/// 每个配置可绑定一个快捷键直接打开，存在 hotkeys 里的 key 是 `profile:<配置 id>`
+const profileHotkeyPrefix = 'profile:';
+
 /// 动作 id → 中文名（设置页、命令面板用）
-const hotkeyActionNames = <String, String>{
+final hotkeyActionNames = <String, String>{
   'copy': '复制',
+  'ctrl-c': '智能 Ctrl-C（有选区时复制，否则中断）',
+  'copy-current-path': '复制当前路径',
   'paste': '粘贴',
   'clear': '清屏',
   'select-all': '全选',
@@ -195,6 +202,7 @@ const hotkeyActionNames = <String, String>{
   'delete-next-word': '删除后一个单词',
   'search': '搜索',
   'pane-focus-all': '同时输入到所有窗格',
+  'focus-all-tabs': '同时输入到所有标签页',
   'scroll-to-top': '滚动到顶部',
   'scroll-page-up': '向上翻页',
   'scroll-up': '向上滚动一行',
@@ -210,10 +218,15 @@ const hotkeyActionNames = <String, String>{
   'rename-tab': '重命名标签页',
   'next-tab': '下一个标签页',
   'previous-tab': '上一个标签页',
+  'toggle-last-tab': '切换到上一次的标签页',
+  'pin-tab': '固定 / 取消固定标签页',
   'move-tab-left': '标签页左移',
   'move-tab-right': '标签页右移',
   'duplicate-tab': '复制标签页',
   'restart-tab': '重启会话',
+  'restart-ssh-session': '重启 SSH 会话',
+  'restart-telnet-session': '重启 Telnet 会话',
+  'restart-serial-session': '重启串口会话',
   'reconnect-tab': '重新连接',
   'disconnect-tab': '断开连接',
   'open-sftp': '打开 SFTP 文件面板',
@@ -230,6 +243,7 @@ const hotkeyActionNames = <String, String>{
   'pane-nav-left': '聚焦左侧窗格',
   'pane-nav-previous': '聚焦上一个窗格',
   'pane-nav-next': '聚焦下一个窗格',
+  for (var n = 1; n <= 9; n++) 'pane-nav-$n': '聚焦第 $n 个窗格',
   'pane-maximize': '最大化窗格',
   'close-pane': '关闭窗格',
   'pane-increase-vertical': '增加窗格高度',
@@ -240,13 +254,5 @@ const hotkeyActionNames = <String, String>{
   'switch-profile': '切换当前标签页的配置',
   'command-selector': '命令面板',
   'serial': '新建串口连接',
-  'tab-1': '切换到标签页 1',
-  'tab-2': '切换到标签页 2',
-  'tab-3': '切换到标签页 3',
-  'tab-4': '切换到标签页 4',
-  'tab-5': '切换到标签页 5',
-  'tab-6': '切换到标签页 6',
-  'tab-7': '切换到标签页 7',
-  'tab-8': '切换到标签页 8',
-  'tab-9': '切换到标签页 9',
+  for (var n = 1; n <= 20; n++) 'tab-$n': '切换到标签页 $n',
 };

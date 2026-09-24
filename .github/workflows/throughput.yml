@@ -1,0 +1,20 @@
+name: Throughput
+
+# 吞吐回归：每天跑一次标了 #[ignore] 的 tests/throughput.rs（release 构建），也可手动触发
+on:
+  schedule:
+    - cron: '0 3 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: 吞吐测试
+        working-directory: crates/cterm-core
+        run: cargo test --release --test throughput -- --ignored --nocapture

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
@@ -7,6 +8,7 @@ import 'cli.dart';
 import 'src/rust/api/settings.dart' as rust;
 import 'src/rust/frb_generated.dart';
 import 'ui/app_shell.dart';
+import 'update_check.dart';
 
 Future<void> main(List<String> args) async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -24,4 +26,5 @@ Future<void> main(List<String> args) async {
   final app = AppState(config: config);
   await app.reloadProfiles();
   runApp(CTerminalApp(state: app, configError: configError, cli: CliRequest.parse(args)));
+  if (app.application['checkForUpdates'] == true) unawaited(UpdateCheck.onStartup());
 }

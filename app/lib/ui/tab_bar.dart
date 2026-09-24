@@ -8,6 +8,7 @@ import '../app_state.dart';
 import '../theme.dart';
 import '../window_control.dart';
 import 'profile_icons.dart';
+import 'update_button.dart';
 import '../i18n.dart';
 
 /// 标签栏：放在标题栏里，左侧留出红绿灯，标签后面是 “+” 和配置选择按钮，最右是设置
@@ -48,7 +49,7 @@ class AppTabBar extends StatelessWidget {
               ),
             ),
           ),
-          Row(children: [...buttons, const Spacer(), _settingsButton(app)]),
+          Row(children: [...buttons, const Spacer(), const UpdateButton(height: height), _settingsButton(app)]),
         ]),
       );
     }
@@ -63,7 +64,11 @@ class AppTabBar extends StatelessWidget {
           flex: flexible ? 1 : 0,
           child: LayoutBuilder(builder: (context, constraints) {
             final count = app.tabs.length;
-            final width = count == 0 ? 0.0 : (flexible ? constraints.maxWidth / count : (constraints.maxWidth / count).clamp(90.0, 200.0));
+            // 固定的标签页只显示序号和图标，定宽；其余标签页分剩下的宽度
+            final pinnedCount = app.tabs.where((tab) => tab.pinned).length;
+            final restCount = count - pinnedCount;
+            final restWidth = constraints.maxWidth - pinnedCount * _pinnedWidth;
+            final width = restCount == 0 ? 0.0 : (flexible ? restWidth / restCount : (restWidth / restCount).clamp(90.0, 200.0));
             return ReorderableListView.builder(
               scrollDirection: Axis.horizontal,
               buildDefaultDragHandles: false,
@@ -74,18 +79,21 @@ class AppTabBar extends StatelessWidget {
               itemBuilder: (context, index) => ReorderableDragStartListener(
                 key: ValueKey(app.tabs[index].key),
                 index: index,
-                child: SizedBox(width: width, child: _TabItem(tab: app.tabs[index], index: index, vertical: false)),
+                child: SizedBox(width: app.tabs[index].pinned ? _pinnedWidth : width, child: _TabItem(tab: app.tabs[index], index: index, vertical: false)),
               ),
             );
           }),
         ),
         ...buttons,
         Expanded(flex: flexible ? 0 : 1, child: _DragArea(child: const SizedBox(height: height))),
+        const UpdateButton(height: height),
         _settingsButton(app),
         const SizedBox(width: 4),
       ]),
     );
   }
+
+  static const _pinnedWidth = 52.0;
 
   Widget _settingsButton(AppState app) => _ChromeButton(icon: CupertinoIcons.gear, tooltip: tr('设置'), onTap: () => app.openSettings());
 }
@@ -179,12 +187,14 @@ class _TabItemState extends State<_TabItem> {
     }
 
     final highlight = tabColor ?? (active ? colors.textDim : Colors.transparent);
-    return MouseRegion(
+    // 横向标签栏里固定的标签页只显示序号和图标（标题放进悬停提示）
+    final compact = tab.pinned && !widget.vertical;
+    final item = MouseRegion(
       onEnter: (_) => setState(() => _hover = true),
       onExit: (_) => setState(() => _hover = false),
       child: Listener(
         onPointerDown: (event) {
-          if (event.buttons == kMiddleMouseButton) app.closeTab(tab);
+          if (event.buttons == kMiddleMouseButton) app.requestCloseTab(tab);
         },
         child: GestureDetector(
           onTap: () => app.selectTab(widget.index),
@@ -204,28 +214,35 @@ class _TabItemState extends State<_TabItem> {
                 width: 16,
                 child: Text('${widget.index + 1}', style: TextStyle(fontSize: 11, color: colors.textDim)),
               ),
-              if (showIcon) ...[
+              if (showIcon || compact) ...[
                 Icon(icon, size: 14, color: exited ? colors.danger : colors.textDim),
                 const SizedBox(width: 6),
               ],
-              Expanded(
-                child: Text(
-                  tab.title.isEmpty ? tr('终端') : tab.title,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(fontSize: 12.5, color: active ? colors.text : colors.textDim),
+              if (compact) const Spacer(),
+              if (!compact)
+                Expanded(
+                  child: Text(
+                    tab.title.isEmpty ? tr('终端') : tab.title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(fontSize: 12.5, color: active ? colors.text : colors.textDim),
+                  ),
                 ),
-              ),
-              if (tab is TerminalTab && tab.sessions.length > 1)
+              if (tab.pinned && !compact)
+                Padding(
+                  padding: const EdgeInsets.only(right: 2),
+                  child: Icon(CupertinoIcons.pin, size: 11, color: colors.textDim),
+                ),
+              if (!compact && tab is TerminalTab && tab.sessions.length > 1)
                 Padding(
                   padding: const EdgeInsets.only(right: 2),
                   child: Text('${tab.sessions.length}', style: TextStyle(fontSize: 10, color: colors.textDim)),
                 ),
-              if (app.appearance['showTabCloseButton'] != false)
+              if (!compact && !tab.pinned && app.appearance['showTabCloseButton'] != false)
                 Opacity(
                   opacity: _hover || active ? 1 : 0,
                   child: InkWell(
-                    onTap: () => app.closeTab(tab),
+                    onTap: () => app.requestCloseTab(tab),
                     borderRadius: BorderRadius.circular(3),
                     child: Padding(
                       padding: const EdgeInsets.all(3),
@@ -238,6 +255,8 @@ class _TabItemState extends State<_TabItem> {
         ),
       ),
     );
+    if (!compact) return item;
+    return Tooltip(message: tab.title.isEmpty ? tr('终端') : tab.title, waitDuration: const Duration(milliseconds: 500), child: item);
   }
 
   Future<void> _showMenu(BuildContext context, AppState app, Offset position) async {
@@ -256,6 +275,7 @@ class _TabItemState extends State<_TabItem> {
         item('close-left', '关闭左侧标签页'),
         const PopupMenuDivider(height: 8),
         item('rename', '重命名'),
+        item('pin', tab.pinned ? '取消固定' : '固定标签页'),
         if (tab is TerminalTab) item('duplicate', '复制标签页'),
         if (tab is TerminalTab && tab.sessions.length > 1) item('explode', '把窗格拆成标签页'),
         if (tab is TerminalTab) item('restart', remote ? '重新连接' : '重启会话'),
@@ -288,7 +308,9 @@ class _TabItemState extends State<_TabItem> {
     );
     switch (chosen) {
       case 'close':
-        app.closeTab(tab);
+        app.requestCloseTab(tab);
+      case 'pin':
+        app.togglePin(tab);
       case 'close-others':
         app.closeOtherTabs(tab);
       case 'close-right':

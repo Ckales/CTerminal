@@ -2,7 +2,7 @@ name: cterminal
 description: "CTerminal：跨平台桌面终端（Flutter 界面 + Rust 内核）"
 publish_to: 'none'
 
-# 与 lib/version.dart、crates/cterm-core/Cargo.toml 保持一致
+# 与 crates/cterm-core/Cargo.toml 保持一致（界面显示的版本号和新版本检查以后者为准）
 version: 0.1.0+1
 
 environment:

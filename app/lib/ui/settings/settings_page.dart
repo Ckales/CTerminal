@@ -5,7 +5,10 @@ import 'package:flutter/material.dart';
 
 import '../../app_state.dart';
 import '../../src/rust/api/settings.dart' as rust;
+import '../../src/rust/api/update.dart' as update;
+import '../../terminal/terminal_view.dart' show openExternal;
 import '../../theme.dart';
+import '../../update_check.dart';
 import '../../version.dart';
 import '../selector.dart';
 import 'color_schemes_page.dart';
@@ -132,6 +135,7 @@ class _ApplicationPage extends StatelessWidget {
       const SettingsSection(title: '行为', children: [
         ConfigDropdown(path: 'application.language', label: '语言', options: {'system': '跟随系统', 'zh-CN': '简体中文', 'en': 'English'}),
         ConfigSwitch(path: 'application.confirmOnClose', label: '退出时确认', help: '有会话在运行时关闭窗口会先询问'),
+        ConfigSwitch(path: 'application.checkForUpdates', label: '自动检查更新', help: '启动时检查 GitHub 上的新版本，每天最多一次'),
       ]),
     ]);
   }
@@ -170,6 +174,7 @@ class _AppearancePage extends StatelessWidget {
         ),
         const ConfigNumber(path: 'terminal.fontSize', label: '字号', min: 6, max: 72, integer: false),
         const ConfigSlider(path: 'terminal.lineHeight', label: '行高', min: 1, max: 2, divisions: 20),
+        const ConfigSwitch(path: 'terminal.ligatures', label: '连字', help: '字体支持时（如 Fira Code、JetBrains Mono）把 -> != >= 等显示为一个字形'),
       ]),
       const SettingsSection(title: '光标', children: [
         ConfigDropdown(path: 'terminal.cursor', label: '光标形状', options: {'block': '方块', 'underline': '下划线', 'beam': '竖线'}),
@@ -288,6 +293,11 @@ class _ConfigFilePageState extends State<_ConfigFilePage> {
             child: Text(tr('用文本编辑器打开')),
           ),
           OutlinedButton(
+            // 与 Rust 侧 log.rs 约定：配置目录/logs
+            onPressed: () => Process.run(Platform.isMacOS ? 'open' : 'explorer', ['${File(path).parent.path}${Platform.pathSeparator}logs']),
+            child: Text(tr('打开日志目录')),
+          ),
+          OutlinedButton(
             onPressed: () async {
               try {
                 final loaded = await rust.configLoad();
@@ -327,17 +337,58 @@ class _ConfigFilePageState extends State<_ConfigFilePage> {
   }
 }
 
-class _AboutPage extends StatelessWidget {
+class _AboutPage extends StatefulWidget {
   const _AboutPage();
+
+  @override
+  State<_AboutPage> createState() => _AboutPageState();
+}
+
+class _AboutPageState extends State<_AboutPage> {
+  bool _checking = false;
+  update.UpdateInfo? _result;
+  String? _error;
+
+  Future<void> _check() async {
+    setState(() {
+      _checking = true;
+      _error = null;
+    });
+    try {
+      final result = await UpdateCheck.checkNow();
+      if (!mounted) return;
+      setState(() => _result = result);
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => _error = '$error');
+    } finally {
+      if (mounted) setState(() => _checking = false);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     final colors = AppTheme.of(context);
     TextStyle dim = TextStyle(fontSize: 13, color: colors.textDim, height: 1.6);
+    final result = _result;
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
       Text('CTerminal', style: TextStyle(fontSize: 22, fontWeight: FontWeight.w600, color: colors.text)),
       const SizedBox(height: 4),
-      Text(tr('版本 {version}', {'version': appVersion}), style: dim),
+      Text(tr('版本 {version}', {'version': update.appVersion()}), style: dim),
+      const SizedBox(height: 8),
+      Row(children: [
+        OutlinedButton(onPressed: _checking ? null : _check, child: Text(tr(_checking ? '正在检查…' : '检查更新'))),
+        const SizedBox(width: 12),
+        if (_error != null)
+          Flexible(child: Text(_error!, style: TextStyle(fontSize: 12, color: colors.danger)))
+        else if (result != null && result.newer)
+          InkWell(
+            onTap: () => openExternal(result.url),
+            child: Text(tr('发现新版本 {version}，点击打开发布页', {'version': result.latest}), style: TextStyle(fontSize: 12, color: colors.accent)),
+          )
+        else if (result != null)
+          Text(tr('已是最新版本'), style: TextStyle(fontSize: 12, color: colors.textDim)),
+      ]),
       const SizedBox(height: 16),
       Text(tr('跨平台桌面终端。Flutter 绘制界面，Rust 负责终端内核与连接。'), style: dim),
       const SizedBox(height: 16),

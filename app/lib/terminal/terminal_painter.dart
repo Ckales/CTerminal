@@ -26,7 +26,7 @@ List<String> monospaceFallback() {
 
 /// 字体度量：格宽取 100 个字符的平均宽度，避免单字符测量的舍入误差
 class TerminalMetrics {
-  TerminalMetrics({required this.fontFamily, required this.fontSize, required this.lineHeight}) {
+  TerminalMetrics({required this.fontFamily, required this.fontSize, required this.lineHeight, this.ligatures = false}) {
     final painter = TextPainter(
       text: TextSpan(text: 'W' * 100, style: baseStyle()),
       textDirection: TextDirection.ltr,
@@ -40,13 +40,16 @@ class TerminalMetrics {
   final String fontFamily;
   final double fontSize;
   final double lineHeight;
+  /// 连字不改变字宽（等宽连字字体的连字字形宽度就是 N 个格子），只影响段落排版，
+  /// 放在这里是为了切换时 ParagraphCache 整体失效
+  final bool ligatures;
   late final double cellWidth;
   late final double cellHeight;
 
   TextStyle baseStyle() => TextStyle(fontFamily: fontFamily, fontFamilyFallback: monospaceFallback(), fontSize: fontSize, height: 1.0);
 
   bool sameAs(TerminalMetrics other) =>
-      other.fontFamily == fontFamily && other.fontSize == fontSize && other.lineHeight == lineHeight;
+      other.fontFamily == fontFamily && other.fontSize == fontSize && other.lineHeight == lineHeight && other.ligatures == ligatures;
 }
 
 class TextPiece {
@@ -86,28 +89,47 @@ class ParagraphCache {
     _lines.clear();
   }
 
-  CachedLine line(TermLine line, TerminalMetrics metrics) {
+  /// [cursorCol]：开连字时光标所在行传入光标列，该格单独成段，不会和相邻字符连成一个字形
+  CachedLine line(TermLine line, TerminalMetrics metrics, {int? cursorCol}) {
     _ensure(metrics);
-    return _lines.putIfAbsent(line.hash, () => _build(line, metrics));
+    final key = cursorCol == null ? line.hash : Object.hash(line.hash, cursorCol);
+    return _lines.putIfAbsent(key, () => _build(line, metrics, cursorCol));
   }
 
-  CachedLine _build(TermLine line, TerminalMetrics metrics) {
+  CachedLine _build(TermLine line, TerminalMetrics metrics, int? cursorCol) {
     final pieces = <TextPiece>[];
     final boxes = <(int, int, int)>[];
+    final cw = metrics.cellWidth;
     for (final run in line.runs) {
       final text = run.text;
-      if (text.trim().isEmpty && run.flags & (runUnderline | runStrike | runUndercurl) == 0) continue;
+      final decorated = run.flags & (runUnderline | runStrike | runUndercurl) != 0;
+      if (text.trim().isEmpty && !decorated) continue;
       if (run.text.runes.length == 1 && isBoxDrawing(run.text.runes.first) && run.flags & runSelected == 0) {
         boxes.add((run.col, run.text.runes.first, run.fg));
         continue;
       }
-      final paragraph = buildParagraph(text, run.fg, run.flags, metrics);
       final ascii = run.width == text.length;
-      pieces.add(TextPiece(run.col * metrics.cellWidth, run.width * metrics.cellWidth, paragraph, !ascii));
+      // 只有 ASCII 段会多字符并段（见 frame.rs），也只有它们会出现连字
+      if (ascii && cursorCol != null && cursorCol >= run.col && cursorCol < run.col + run.width) {
+        final at = cursorCol - run.col;
+        for (final (start, end) in [(0, at), (at, at + 1), (at + 1, text.length)]) {
+          if (start == end) continue;
+          final part = text.substring(start, end);
+          if (part.trim().isEmpty && !decorated) continue;
+          pieces.add(TextPiece((run.col + start) * cw, part.length * cw, buildParagraph(part, run.fg, run.flags, metrics), false));
+        }
+        continue;
+      }
+      final paragraph = buildParagraph(text, run.fg, run.flags, metrics);
+      pieces.add(TextPiece(run.col * cw, run.width * cw, paragraph, !ascii));
     }
     return CachedLine(pieces, boxes);
   }
 }
+
+/// 开：连字 + 上下文替换；关：两者都显式禁用（有些字体默认开 calt，如 JetBrains Mono 的 -> 就靠它）
+const _ligaturesOn = [ui.FontFeature.enable('liga'), ui.FontFeature.enable('calt')];
+const _ligaturesOff = [ui.FontFeature.disable('liga'), ui.FontFeature.disable('calt')];
 
 ui.Paragraph buildParagraph(String text, int fg, int flags, TerminalMetrics metrics) {
   final color = rgb(fg);
@@ -125,6 +147,7 @@ ui.Paragraph buildParagraph(String text, int fg, int flags, TerminalMetrics metr
     decoration: TextDecoration.combine(decorations),
     decorationColor: color,
     decorationStyle: flags & runUndercurl != 0 ? TextDecorationStyle.wavy : TextDecorationStyle.solid,
+    fontFeatures: metrics.ligatures ? _ligaturesOn : _ligaturesOff,
   );
   final builder = ui.ParagraphBuilder(ui.ParagraphStyle(maxLines: 1, textDirection: TextDirection.ltr))
     ..pushStyle(style)
@@ -300,7 +323,8 @@ class TerminalPainter extends CustomPainter {
           canvas.drawRect(rect, _fill(selectionColor));
         }
       }
-      final painted = cache.line(line, metrics);
+      final splitCursor = metrics.ligatures && row == frame.cursorRow && frame.cursorVisible && frame.displayOffset == 0;
+      final painted = cache.line(line, metrics, cursorCol: splitCursor ? frame.cursorCol : null);
       for (final piece in painted.pieces) {
         final paragraph = piece.paragraph;
         final dy = y + (ch - paragraph.height) / 2;
