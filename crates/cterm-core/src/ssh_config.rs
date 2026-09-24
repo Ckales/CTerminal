@@ -36,7 +36,8 @@ fn home(ssh_dir: &Path) -> &Path {
 
 fn expand_home(path: &str, ssh_dir: &Path) -> String {
     if let Some(rest) = path.strip_prefix("~/") {
-        return home(ssh_dir).join(rest).display().to_string();
+        // 按组件重建：Windows 上把 rest 里的 / 统一成 \，不留混合分隔符
+        return home(ssh_dir).join(rest).components().collect::<PathBuf>().display().to_string();
     }
     path.to_string()
 }
