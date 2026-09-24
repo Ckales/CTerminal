@@ -32,16 +32,6 @@ func render(size: Int) -> Data {
     NSColor(red: 0.07, green: 0.07, blue: 0.08, alpha: 1).cgColor,
   ] as CFArray, locations: [0, 1])!
   context.drawLinearGradient(gradient, start: CGPoint(x: 0, y: body.maxY), end: CGPoint(x: 0, y: body.minY), options: [])
-
-  // 顶部标签条：呼应标签栏里激活标签页的高亮线
-  let bar = CGRect(x: body.minX, y: body.maxY - 150 * scale, width: body.width, height: 150 * scale)
-  context.setFillColor(NSColor(white: 1, alpha: 0.05).cgColor)
-  context.fill(bar)
-  let tab = CGRect(x: body.minX + 70 * scale, y: bar.minY, width: 250 * scale, height: bar.height)
-  context.setFillColor(NSColor(white: 1, alpha: 0.08).cgColor)
-  context.fill(tab)
-  context.setFillColor(NSColor(red: 0.36, green: 0.66, blue: 0.96, alpha: 1).cgColor)
-  context.fill(CGRect(x: tab.minX, y: tab.maxY - 14 * scale, width: tab.width, height: 14 * scale))
   context.restoreGState()
 
   // 提示符 “>_”
@@ -51,7 +41,8 @@ func render(size: Int) -> Data {
   context.setLineCap(.round)
   context.setLineJoin(.round)
   let chevronLeft = body.minX + 190 * scale
-  let chevronMid = body.minY + 330 * scale
+  // 提示符整体（光标底 -180 到箭头顶 +150）在底板里垂直居中
+  let chevronMid = body.minY + 427 * scale
   context.move(to: CGPoint(x: chevronLeft, y: chevronMid + 150 * scale))
   context.addLine(to: CGPoint(x: chevronLeft + 150 * scale, y: chevronMid))
   context.addLine(to: CGPoint(x: chevronLeft, y: chevronMid - 150 * scale))
