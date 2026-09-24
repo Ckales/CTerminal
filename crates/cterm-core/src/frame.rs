@@ -350,4 +350,112 @@ mod tests {
         assert_eq!(mix(0xffffff, 0x000000, 0), 0xffffff);
         assert_eq!(mix(0xffffff, 0x000000, 255), 0x000000);
     }
+
+    use alacritty_terminal::event::VoidListener;
+    use alacritty_terminal::term::Config;
+    use alacritty_terminal::vte::ansi::Processor;
+
+    use crate::session::WinSize;
+
+    /// 喂一段 VT 输出，返回生成的帧
+    fn render(output: &str, bold_is_bright: bool) -> Frame {
+        let size = WinSize { cols: 20, rows: 3, cell_width: 8, cell_height: 16 };
+        let mut term = Term::new(Config::default(), &size, VoidListener);
+        let mut parser: Processor = Processor::new();
+        parser.advance(&mut term, output.as_bytes());
+        build(&term, &Palette::default(), None, bold_is_bright)
+    }
+
+    /// 各段文本（去掉行尾补齐的空格段）
+    fn texts(line: &FrameLine) -> Vec<&str> {
+        let mut texts = Vec::new();
+        for run in &line.runs {
+            let text = run.text.trim_end_matches(' ');
+            if !text.is_empty() {
+                texts.push(text);
+            }
+        }
+        texts
+    }
+
+    #[test]
+    fn ascii_merges_until_style_changes() {
+        let frame = render("ab\x1b[31mcd\x1b[0me", true);
+        let runs = &frame.lines[0].runs;
+        assert_eq!(texts(&frame.lines[0]), ["ab", "cd", "e"]);
+        assert_eq!(runs[1].col, 2);
+        assert_eq!(runs[1].width, 2);
+        assert_eq!(runs[1].fg, Palette::default().ansi[1]);
+        assert!(runs[0].flags & RUN_DEFAULT_BG != 0);
+        assert_eq!(frame.lines.len(), 3);
+    }
+
+    #[test]
+    fn wide_and_non_ascii_chars_get_their_own_runs() {
+        let frame = render("a中be\u{301}c", true);
+        let runs = &frame.lines[0].runs;
+        assert_eq!(texts(&frame.lines[0]), ["a", "中", "b", "e\u{301}", "c"]);
+        // 宽字符占两格，占位格不单独出段
+        assert_eq!((runs[1].col, runs[1].width), (1, 2));
+        assert_eq!(runs[2].col, 3);
+        // 组合字符跟在基字符里，只占一格
+        assert_eq!((runs[3].col, runs[3].width), (4, 1));
+        assert_eq!(runs[4].col, 5);
+    }
+
+    #[test]
+    fn color_forms_resolve_to_rgb() {
+        let frame = render("\x1b[38;2;1;2;3mA\x1b[38;5;196mB\x1b[1;31mC\x1b[0;1;38;5;1mD", true);
+        let runs = &frame.lines[0].runs;
+        let palette = Palette::default();
+        assert_eq!(runs[0].fg, 0x010203);
+        assert_eq!(runs[1].fg, 0xff0000);
+        // 粗体 + 基本色 → 亮色（bold_is_bright），256 色写法的 0-7 同样处理，所以 C、D 同色并段
+        assert_eq!(runs[2].fg, palette.ansi[9]);
+        assert_eq!(runs[2].flags & RUN_BOLD, RUN_BOLD);
+        assert_eq!(runs[2].text, "CD");
+        let plain = render("\x1b[1;31mC", false);
+        assert_eq!(plain.lines[0].runs[0].fg, palette.ansi[1]);
+    }
+
+    #[test]
+    fn inverse_hidden_and_decorations() {
+        let palette = Palette::default();
+        let frame = render("\x1b[7mI\x1b[0;8mH\x1b[0;4;9;3mU", true);
+        let runs = &frame.lines[0].runs;
+        assert_eq!((runs[0].fg, runs[0].bg), (palette.background, palette.foreground));
+        assert_eq!(runs[0].flags & RUN_DEFAULT_BG, 0);
+        assert_eq!(runs[1].fg, runs[1].bg);
+        assert_eq!(runs[2].flags & (RUN_UNDERLINE | RUN_STRIKE | RUN_ITALIC), RUN_UNDERLINE | RUN_STRIKE | RUN_ITALIC);
+    }
+
+    #[test]
+    fn line_hash_tracks_content() {
+        let frame = render("same\r\nsame\r\nother", true);
+        assert_eq!(frame.lines[0].hash, frame.lines[1].hash);
+        assert_ne!(frame.lines[0].hash, frame.lines[2].hash);
+    }
+
+    #[test]
+    fn cursor_and_default_colors() {
+        let frame = render("ab\x1b[?25l", true);
+        assert_eq!((frame.cursor.col, frame.cursor.row), (2, 0));
+        assert!(!frame.cursor.visible);
+        let frame = render("\x1b[6 q", true);
+        assert_eq!(frame.cursor.shape, 2);
+        assert!(frame.cursor.visible);
+        // OSC 11 改背景后，默认背景标记跟着新背景走
+        let frame = render("\x1b]11;#102030\x07x", true);
+        assert_eq!(frame.background, 0x102030);
+        assert!(frame.lines[0].runs[0].flags & RUN_DEFAULT_BG != 0);
+    }
+
+    #[test]
+    fn color_queries() {
+        let palette = Palette::default();
+        assert_eq!(from_rgb(palette.request_color(1)), palette.ansi[1]);
+        assert_eq!(from_rgb(palette.request_color(256)), palette.foreground);
+        assert_eq!(from_rgb(palette.request_color(257)), palette.background);
+        assert_eq!(from_rgb(palette.request_color(258)), palette.cursor);
+    }
 }

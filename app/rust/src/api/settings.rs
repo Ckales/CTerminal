@@ -3,7 +3,7 @@
 use std::sync::{LazyLock, Mutex};
 
 use cterm_core::config::{self, Config, Profile, ProfileKind};
-use cterm_core::{paths, schemes, secrets, serial, shells};
+use cterm_core::{log, paths, schemes, secrets, serial, shells};
 use flutter_rust_bridge::frb;
 
 static CONFIG: LazyLock<Mutex<Option<Config>>> = LazyLock::new(|| Mutex::new(None));
@@ -13,7 +13,11 @@ pub(crate) fn current_config() -> Config {
     if let Some(config) = cached.as_ref() {
         return config.clone();
     }
-    let config = config::load().unwrap_or_default();
+    log::init();
+    let config = config::load().unwrap_or_else(|err| {
+        log::error(&format!("读取配置失败，本次使用默认设置：{err}"));
+        Config::default()
+    });
     *cached = Some(config.clone());
     config
 }
@@ -24,15 +28,17 @@ fn to_json<T: serde::Serialize>(value: &T) -> String {
 
 /// 读取配置（缺失字段已补默认值）。文件损坏时返回错误，不静默覆盖用户的文件。
 pub fn config_load() -> Result<String, String> {
-    let config = config::load()?;
+    // 启动时第一个调用，顺带初始化日志
+    log::init();
+    let config = config::load().inspect_err(|err| log::error(&format!("读取配置失败：{err}")))?;
     *CONFIG.lock().unwrap() = Some(config.clone());
     Ok(to_json(&config))
 }
 
 /// 校验并保存，返回规范化后的配置
 pub fn config_save(json: String) -> Result<String, String> {
-    let config = config::parse(&json)?;
-    config::save(&config)?;
+    let config = config::parse(&json).inspect_err(|err| log::error(&format!("保存配置失败：{err}")))?;
+    config::save(&config).inspect_err(|err| log::error(&format!("保存配置失败：{err}")))?;
     *CONFIG.lock().unwrap() = Some(config.clone());
     Ok(to_json(&config))
 }

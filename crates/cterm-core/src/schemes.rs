@@ -92,4 +92,36 @@ mod tests {
         }
         assert_eq!(builtin()[0].to_palette().unwrap(), Palette::default());
     }
+
+    fn custom(name: &str, background: &str) -> ColorScheme {
+        let mut scheme = builtin()[0].clone();
+        scheme.name = name.into();
+        scheme.background = background.into();
+        scheme
+    }
+
+    #[test]
+    fn custom_scheme_overrides_builtin_with_same_name() {
+        let mut config = Config::default();
+        config.custom_color_schemes.push(custom("Nord", "#010203"));
+        config.custom_color_schemes.push(custom("Mine", "#040506"));
+        let schemes = all(&config);
+        assert_eq!(schemes.len(), builtin().len() + 1);
+        assert_eq!(schemes.iter().filter(|scheme| scheme.name == "Nord").count(), 1);
+        assert_eq!(schemes.last().unwrap().name, "Mine");
+        config.terminal.color_scheme = "Nord".into();
+        assert_eq!(palette_for(&config).background, 0x010203);
+    }
+
+    #[test]
+    fn unknown_or_broken_scheme_falls_back_to_default() {
+        let mut config = Config::default();
+        config.terminal.color_scheme = "不存在".into();
+        assert_eq!(palette_for(&config), Palette::default());
+        config.custom_color_schemes.push(custom("Broken", "#12345"));
+        config.terminal.color_scheme = "Broken".into();
+        assert_eq!(palette_for(&config), Palette::default());
+        // 配置本身不被改写
+        assert_eq!(config.terminal.color_scheme, "Broken");
+    }
 }

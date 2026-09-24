@@ -58,6 +58,7 @@ pub fn open(options: &SerialOptions, tx: Sender<Output>) -> io::Result<SerialTra
     let reader_tx = tx.clone();
     let closed = Arc::new(AtomicBool::new(false));
     let reader_closed = closed.clone();
+    let port_name = options.port.clone();
     thread::Builder::new().name("cterm-serial".into()).spawn(move || {
         let mut buffer = vec![0u8; 4096];
         let reason = loop {
@@ -77,6 +78,7 @@ pub fn open(options: &SerialOptions, tx: Sender<Output>) -> io::Result<SerialTra
                 Err(err) => break trf!("串口已断开：{err}", err = err),
             }
         };
+        crate::log::info(&format!("串口 {port_name} 会话结束：{}", if reason.is_empty() { "正常关闭" } else { &reason }));
         let _ = reader_tx.send(Output::Closed(reason));
     })?;
 
@@ -125,5 +127,14 @@ mod tests {
     fn newline_conversion() {
         assert_eq!(convert_newlines(b"ls\r", b"\r\n"), b"ls\r\n");
         assert_eq!(convert_newlines(b"a\rb", b"\n"), b"a\nb");
+    }
+
+    #[test]
+    fn newline_conversion_leaves_lf_and_repeats_cr() {
+        // 只转换 Enter 发出的 CR；LF 原样发送，连续 CR 各自转换
+        assert_eq!(convert_newlines(b"a\nb", b"\r\n"), b"a\nb");
+        assert_eq!(convert_newlines(b"\r\r", b"\r\n"), b"\r\n\r\n");
+        assert_eq!(convert_newlines(b"x\r", b"\r"), b"x\r");
+        assert!(convert_newlines(b"", b"\r\n").is_empty());
     }
 }

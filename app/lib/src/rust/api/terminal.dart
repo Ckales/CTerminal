@@ -143,6 +143,10 @@ void termSearchClear({required int id}) =>
 void termClear({required int id}) =>
     RustLib.instance.api.crateApiTerminalTermClear(id: id);
 
+/// 远端 rz 在等上传时，界面选好的文件；空列表 = 取消
+void termZmodemUpload({required int id, required List<String> paths}) =>
+    RustLib.instance.api.crateApiTerminalTermZmodemUpload(id: id, paths: paths);
+
 /// 关闭连接并释放会话
 void termClose({required int id}) =>
     RustLib.instance.api.crateApiTerminalTermClose(id: id);
@@ -155,7 +159,7 @@ String termCwd({required int id}) =>
 void termApplySettings() =>
     RustLib.instance.api.crateApiTerminalTermApplySettings();
 
-/// kind: wakeup / title / bell / copy / exit / status
+/// kind: wakeup / title / bell / copy / exit / status / zmodem-upload
 class TermEvent {
   final String kind;
   final String text;

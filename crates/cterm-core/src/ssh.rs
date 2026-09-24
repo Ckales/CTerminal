@@ -3,6 +3,9 @@
 
 use std::io;
 use std::path::PathBuf;
+use std::pin::Pin;
+use std::process::Stdio;
+use std::task::{Context, Poll};
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, LazyLock};
 use std::time::Duration;
@@ -12,13 +15,14 @@ use russh::keys::agent::client::AgentClient;
 use russh::keys::known_hosts::{check_known_hosts_path, learn_known_hosts_path};
 use russh::keys::{HashAlg, PrivateKeyWithHashAlg, PublicKey, PublicKeyOrCertificate};
 use russh::{Channel, ChannelMsg, Disconnect};
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader, ReadBuf};
 use tokio::net::{TcpListener, TcpStream};
+use tokio::process::{Child, ChildStdin, ChildStdout};
 use tokio::sync::{mpsc, Mutex};
 
 use crate::i18n::tr;
 use crate::config::{ForwardedPort, Profile, ProfileKind, SshOptions, SshSettings};
-use crate::secrets;
+use crate::{log, secrets};
 use crate::session::{Output, Transport, WinSize};
 
 pub static RUNTIME: LazyLock<tokio::runtime::Runtime> = LazyLock::new(|| {
@@ -87,7 +91,7 @@ impl Prompter {
     }
 
     fn info(&self, text: &str) {
-        self.print(&format!("\x1b[2m{text}\x1b[0m\n"));
+        let _ = self.out.send(dim(text));
     }
 
     /// Ctrl-C / 关闭标签 → None
@@ -137,6 +141,11 @@ impl Prompter {
     async fn confirm(&mut self, prompt: &str) -> bool {
         matches!(self.read_line(prompt, true).await.as_deref().map(str::trim), Some("y" | "yes" | "Y" | "YES"))
     }
+}
+
+/// 暗色的一行提示（连接过程信息、代理命令的 stderr）
+fn dim(text: &str) -> Output {
+    Output::Data(format!("\x1b[2m{text}\x1b[0m\n").replace('\n', "\r\n").into_bytes())
 }
 
 type SharedPrompter = Arc<Mutex<Prompter>>;
@@ -269,10 +278,17 @@ pub fn connect(
         prompter,
         shared: shared.clone(),
     };
+    let target = format!("{}:{}", options.host, options.port);
     RUNTIME.spawn(async move {
         let reason = match job.run().await {
-            Ok(reason) => reason,
-            Err(err) => format!("\x1b[31m{err}\x1b[0m"),
+            Ok(reason) => {
+                log::info(&format!("SSH {target} 会话结束：{}", if reason.is_empty() { "正常" } else { &reason }));
+                reason
+            }
+            Err(err) => {
+                log::warn(&format!("SSH {target} 失败：{err}"));
+                format!("\x1b[31m{err}\x1b[0m")
+            }
         };
         let _ = out.send(Output::Closed(reason));
     });
@@ -306,6 +322,96 @@ fn client_config(options: &SshOptions) -> Arc<client::Config> {
         nodelay: true,
         ..Default::default()
     })
+}
+
+/// ProxyCommand 占位符，同 OpenSSH：%h 主机、%p 端口、%r 用户、%% 百分号
+fn expand_proxy_command(template: &str, host: &str, port: u16, user: &str) -> Result<String, String> {
+    let mut command = String::new();
+    let mut chars = template.chars();
+    while let Some(c) = chars.next() {
+        if c != '%' {
+            command.push(c);
+            continue;
+        }
+        match chars.next() {
+            Some('%') => command.push('%'),
+            Some('h') => command.push_str(host),
+            Some('p') => command.push_str(&port.to_string()),
+            Some('r') => command.push_str(user),
+            other => {
+                let token = other.map(String::from).unwrap_or_default();
+                return Err(trf!("代理命令含不支持的占位符：%{token}", token = token));
+            }
+        }
+    }
+    Ok(command)
+}
+
+/// ProxyCommand 子进程：stdin/stdout 组成 SSH 的传输流，stderr 暗色显示在终端里。
+/// 连接结束时 russh 丢弃这个流，子进程随之被杀掉并由 tokio 回收
+struct ProxyStream {
+    stdin: ChildStdin,
+    stdout: ChildStdout,
+    _child: Child,
+}
+
+impl ProxyStream {
+    fn spawn(command: &str, out: Sender<Output>) -> io::Result<ProxyStream> {
+        let mut process = proxy_process(command);
+        process.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).kill_on_drop(true);
+        let mut child = process.spawn()?;
+        let stdin = child.stdin.take().expect("stdin 已设为 piped");
+        let stdout = child.stdout.take().expect("stdout 已设为 piped");
+        let stderr = child.stderr.take().expect("stderr 已设为 piped");
+        // 一直读到 EOF：中途不读会让子进程写 stderr 时阻塞或收到 SIGPIPE
+        tokio::spawn(async move {
+            let mut reader = BufReader::new(stderr);
+            let mut buffer = Vec::new();
+            while reader.read_until(b'\n', &mut buffer).await.is_ok_and(|count| count > 0) {
+                let _ = out.send(dim(String::from_utf8_lossy(&buffer).trim_end()));
+                buffer.clear();
+            }
+        });
+        Ok(ProxyStream { stdin, stdout, _child: child })
+    }
+}
+
+/// 同 OpenSSH 用 exec 替换掉 shell，关闭时杀到的就是代理命令本身
+#[cfg(unix)]
+fn proxy_process(command: &str) -> tokio::process::Command {
+    let mut process = tokio::process::Command::new("sh");
+    process.arg("-c").arg(format!("exec {command}"));
+    process
+}
+
+/// ponytail: cmd 没有 exec，关闭时只杀掉 cmd.exe；代理命令本身靠 stdin 关闭后自行退出
+#[cfg(windows)]
+fn proxy_process(command: &str) -> tokio::process::Command {
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    let mut process = tokio::process::Command::new("cmd");
+    // 原样传给 cmd，不做 Rust 的参数转义（否则命令里的引号会被改写）
+    process.arg("/C").raw_arg(command).creation_flags(CREATE_NO_WINDOW);
+    process
+}
+
+impl AsyncRead for ProxyStream {
+    fn poll_read(mut self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &mut ReadBuf<'_>) -> Poll<io::Result<()>> {
+        Pin::new(&mut self.stdout).poll_read(cx, buf)
+    }
+}
+
+impl AsyncWrite for ProxyStream {
+    fn poll_write(mut self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &[u8]) -> Poll<io::Result<usize>> {
+        Pin::new(&mut self.stdin).poll_write(cx, buf)
+    }
+
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Pin::new(&mut self.stdin).poll_flush(cx)
+    }
+
+    fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Pin::new(&mut self.stdin).poll_shutdown(cx)
+    }
 }
 
 impl Job {
@@ -421,14 +527,8 @@ impl Job {
         let config = client_config(options);
         let timeout = Duration::from_secs(options.ready_timeout.max(5) as u64);
 
-        let mut handle = if options.jump_host.is_empty() {
-            self.prompter.lock().await.info(&trf!("正在连接 {host}:{port} …", host = options.host, port = options.port));
-            let connecting = client::connect(config, (options.host.as_str(), options.port), handler);
-            tokio::time::timeout(timeout, connecting)
-                .await
-                .map_err(|_| trf!("连接 {host}:{port} 超时", host = options.host, port = options.port))?
-                .map_err(|err| trf!("连接 {host}:{port} 失败：{err}", host = options.host, port = options.port, err = err))?
-        } else {
+        // 优先级同 OpenSSH：跳板机 > ProxyCommand > 直连
+        let mut handle = if !options.jump_host.is_empty() {
             let jump = self
                 .profiles
                 .iter()
@@ -439,6 +539,7 @@ impl Job {
             };
             let jump_handle = Box::pin(self.open(jump_options, &jump.id, depth + 1)).await?;
             self.prompter.lock().await.info(&trf!("经由 {jump} 连接 {host}:{port} …", jump = jump.name, host = options.host, port = options.port));
+            log::info(&format!("SSH 经跳板机 {} 连接 {}:{}", jump.name, options.host, options.port));
             let tunnel = jump_handle
                 .channel_open_direct_tcpip(options.host.clone(), options.port as u32, "127.0.0.1", 0)
                 .await
@@ -456,9 +557,33 @@ impl Job {
                 }
             });
             handle
+        } else if !options.proxy_command.is_empty() {
+            let command = expand_proxy_command(&options.proxy_command, &options.host, options.port, &user)?;
+            let out = {
+                let prompter = self.prompter.lock().await;
+                prompter.info(&trf!("经由代理命令连接 {host}:{port} …", host = options.host, port = options.port));
+                prompter.out.clone()
+            };
+            // 命令本身可能带凭据（如 sshpass），日志里不记
+            log::info(&format!("SSH 经 ProxyCommand 连接 {}:{}", options.host, options.port));
+            let stream = ProxyStream::spawn(&command, out).map_err(|err| trf!("无法启动代理命令：{err}", err = err))?;
+            let connecting = client::connect_stream(config, stream, handler);
+            tokio::time::timeout(timeout, connecting)
+                .await
+                .map_err(|_| trf!("连接 {host}:{port} 超时", host = options.host, port = options.port))?
+                .map_err(|err| trf!("经代理命令连接失败：{err}", err = err))?
+        } else {
+            self.prompter.lock().await.info(&trf!("正在连接 {host}:{port} …", host = options.host, port = options.port));
+            log::info(&format!("SSH 连接 {}:{}", options.host, options.port));
+            let connecting = client::connect(config, (options.host.as_str(), options.port), handler);
+            tokio::time::timeout(timeout, connecting)
+                .await
+                .map_err(|_| trf!("连接 {host}:{port} 超时", host = options.host, port = options.port))?
+                .map_err(|err| trf!("连接 {host}:{port} 失败：{err}", host = options.host, port = options.port, err = err))?
         };
 
         self.authenticate(&mut handle, options, profile_id, &user).await?;
+        log::info(&format!("SSH {user}@{}:{} 已连接并通过认证", options.host, options.port));
         Ok(handle)
     }
 
@@ -475,13 +600,21 @@ impl Job {
         let method = options.auth.as_str();
         let auto = method == "auto";
         let fail = |err: russh::Error| trf!("认证出错：{err}", err = err);
+        let target = format!("{user}@{}:{}", options.host, options.port);
+        let passed = |how: &str| log::info(&format!("SSH {target} 认证通过：{how}"));
+        let rejected = |how: &str| log::info(&format!("SSH {target} 认证未通过：{how}"));
 
         if let Ok(AuthResult::Success) = handle.authenticate_none(user).await {
+            passed("none");
             return Ok(());
         }
 
-        if (auto || method == "agent") && self.settings.use_agent && self.try_agent(handle, user).await {
-            return Ok(());
+        if (auto || method == "agent") && self.settings.use_agent {
+            if self.try_agent(handle, user).await {
+                passed("ssh-agent");
+                return Ok(());
+            }
+            rejected("ssh-agent");
         }
 
         if auto || method == "publicKey" {
@@ -506,8 +639,10 @@ impl Job {
                     .await
                     .map_err(fail)?;
                 if result.success() {
+                    passed(&format!("私钥 {}", path.display()));
                     return Ok(());
                 }
+                rejected(&format!("私钥 {}", path.display()));
             }
         }
 
@@ -515,14 +650,21 @@ impl Job {
             let password_key = secrets::key("password", profile_id);
             if let Some(saved) = secrets::get(&password_key) {
                 if method != "keyboardInteractive" && handle.authenticate_password(user, saved.clone()).await.map_err(fail)?.success() {
+                    passed("钥匙串中的密码");
                     return Ok(());
                 }
                 if method != "password" && self.keyboard_interactive(handle, user, Some(&saved)).await? {
+                    passed("键盘交互（钥匙串中的密码）");
                     return Ok(());
                 }
+                rejected("钥匙串中的密码已失效");
                 self.prompter.lock().await.info(&tr("钥匙串中保存的密码已失效"));
-            } else if method != "password" && self.keyboard_interactive(handle, user, None).await? {
-                return Ok(());
+            } else if method != "password" {
+                if self.keyboard_interactive(handle, user, None).await? {
+                    passed("键盘交互");
+                    return Ok(());
+                }
+                rejected("键盘交互");
             }
             if method != "keyboardInteractive" {
                 for _ in 0..3 {
@@ -531,9 +673,11 @@ impl Job {
                         return Err(tr("已取消"));
                     };
                     if handle.authenticate_password(user, password.clone()).await.map_err(fail)?.success() {
+                        passed("输入的密码");
                         self.offer_save(&password_key, &password).await;
                         return Ok(());
                     }
+                    rejected("输入的密码");
                     self.prompter.lock().await.info(&tr("密码错误"));
                 }
             }
@@ -658,13 +802,17 @@ impl Job {
                         target = forward.target_address,
                         target_port = forward.target_port,
                     )),
-                    Err(err) => prompter.info(&trf!("远程转发 {port} 失败：{err}", port = forward.port, err = err)),
+                    Err(err) => {
+                        log::warn(&format!("SSH 远程转发 {}:{} 失败：{err}", bind_host, forward.port));
+                        prompter.info(&trf!("远程转发 {port} 失败：{err}", port = forward.port, err = err));
+                    }
                 }
             }
             "local" | "dynamic" => {
                 let listener = match TcpListener::bind((bind_host.as_str(), forward.port)).await {
                     Ok(listener) => listener,
                     Err(err) => {
+                        log::warn(&format!("SSH 端口转发监听 {}:{} 失败：{err}", bind_host, forward.port));
                         self.prompter.lock().await.info(&trf!("监听 {bind}:{port} 失败：{err}", bind = bind_host, port = forward.port, err = err));
                         return;
                     }
@@ -761,6 +909,14 @@ async fn socks5_handshake<S: AsyncReadExt + AsyncWriteExt + Unpin>(socket: &mut 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn proxy_command_tokens() {
+        let expanded = expand_proxy_command("ssh -W %h:%p -l %r gw.example.com # 100%%", "192.0.2.7", 2222, "deploy");
+        assert_eq!(expanded.as_deref(), Ok("ssh -W 192.0.2.7:2222 -l deploy gw.example.com # 100%"));
+        assert!(expand_proxy_command("nc %x", "h", 22, "u").is_err());
+        assert!(expand_proxy_command("nc %", "h", 22, "u").is_err());
+    }
 
     #[test]
     fn socks5_domain_request() {

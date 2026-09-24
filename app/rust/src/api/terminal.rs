@@ -35,7 +35,7 @@ impl TermSize {
     }
 }
 
-/// kind: wakeup / title / bell / copy / exit / status
+/// kind: wakeup / title / bell / copy / exit / status / zmodem-upload
 pub struct TermEvent {
     pub kind: String,
     pub text: String,
@@ -84,6 +84,7 @@ pub fn term_open(id: u32, profile_json: String, size: TermSize, sink: StreamSink
             SessionEvent::Copy(text) => ("copy", text),
             SessionEvent::Exit(reason) => ("exit", reason),
             SessionEvent::Status(text) => ("status", text),
+            SessionEvent::ZmodemUpload => ("zmodem-upload", String::new()),
         };
         let _ = sink.add(TermEvent { kind: kind.into(), text });
     });
@@ -253,6 +254,14 @@ pub fn term_search_clear(id: u32) {
 pub fn term_clear(id: u32) {
     if let Some(session) = session(id) {
         session.clear();
+    }
+}
+
+/// 远端 rz 在等上传时，界面选好的文件；空列表 = 取消
+#[frb(sync)]
+pub fn term_zmodem_upload(id: u32, paths: Vec<String>) {
+    if let Some(session) = session(id) {
+        session.zmodem_upload(paths.into_iter().map(std::path::PathBuf::from).collect());
     }
 }
 

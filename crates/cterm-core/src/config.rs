@@ -116,6 +116,8 @@ pub struct SshOptions {
     pub private_keys: Vec<String>,
     /// 跳板机：另一个 SSH profile 的 id
     pub jump_host: String,
+    /// 经由此命令的 stdin/stdout 连接（%h %p %r %%）；同时配置了跳板机时以跳板机为准
+    pub proxy_command: String,
     pub forwarded_ports: Vec<ForwardedPort>,
     pub keepalive_interval: u32,
     pub keepalive_count_max: u32,
@@ -134,6 +136,7 @@ impl Default for SshOptions {
             auth: "auto".into(),
             private_keys: Vec::new(),
             jump_host: String::new(),
+            proxy_command: String::new(),
             forwarded_ports: Vec::new(),
             keepalive_interval: 30,
             keepalive_count_max: 3,
@@ -242,6 +245,8 @@ pub struct TerminalSettings {
     pub scroll_on_input: bool,
     pub word_separators: String,
     pub padding: f64,
+    /// 字体连字（liga / calt），默认关
+    pub ligatures: bool,
 }
 
 impl Default for TerminalSettings {
@@ -264,6 +269,7 @@ impl Default for TerminalSettings {
             scroll_on_input: true,
             word_separators: ",│`|:\"' ()[]{}<>\t".into(),
             padding: 8.0,
+            ligatures: false,
         }
     }
 }
@@ -318,6 +324,8 @@ pub struct ApplicationSettings {
     pub enable_welcome_tab: bool,
     /// 关闭窗口 / 有运行中会话时确认
     pub confirm_on_close: bool,
+    /// 启动时检查新版本（每天最多一次）
+    pub check_for_updates: bool,
 }
 
 impl Default for ApplicationSettings {
@@ -328,6 +336,7 @@ impl Default for ApplicationSettings {
             default_profile: String::new(),
             enable_welcome_tab: true,
             confirm_on_close: true,
+            check_for_updates: true,
         }
     }
 }
@@ -378,7 +387,8 @@ impl ColorScheme {
 
 pub fn parse_hex(color: &str) -> Option<u32> {
     let hex = color.strip_prefix('#')?;
-    if hex.len() != 6 {
+    // from_str_radix 接受前导 '+'，"#+12345" 不能算合法颜色
+    if hex.len() != 6 || !hex.bytes().all(|byte| byte.is_ascii_hexdigit()) {
         return None;
     }
     u32::from_str_radix(hex, 16).ok()
@@ -406,6 +416,10 @@ pub fn default_hotkeys() -> BTreeMap<String, Vec<String>> {
         ("delete-next-word", vec![if mac { "⌥-Delete".into() } else { "Ctrl-Delete".into() }]),
         ("search", vec![format!("{cmd}-F")]),
         ("pane-focus-all", vec![if mac { "⌘-Shift-I".into() } else { "Ctrl-Shift-I".into() }]),
+        ("focus-all-tabs", vec![if mac { "⌘-⌥-Shift-I".into() } else { "Ctrl-Alt-Shift-I".into() }]),
+        ("copy-current-path", vec![]),
+        // 有选区时复制，否则发 ^C；默认不绑定，免得 Ctrl-C 行为出乎意料
+        ("ctrl-c", vec![]),
         ("scroll-to-top", vec!["Shift-PageUp".into()]),
         ("scroll-page-up", vec![format!("{alt}-PageUp")]),
         ("scroll-up", vec!["Ctrl-Shift-Up".into()]),
@@ -425,6 +439,11 @@ pub fn default_hotkeys() -> BTreeMap<String, Vec<String>> {
         ("move-tab-right", vec![if mac { "⌘-Shift-Right".into() } else { "Ctrl-Shift-PageDown".into() }]),
         ("duplicate-tab", vec![]),
         ("restart-tab", vec![]),
+        ("restart-ssh-session", vec![]),
+        ("restart-telnet-session", vec![]),
+        ("restart-serial-session", vec![]),
+        ("toggle-last-tab", vec![]),
+        ("pin-tab", vec![]),
         ("reconnect-tab", vec![]),
         ("disconnect-tab", vec![]),
         ("open-sftp", vec![]),
@@ -461,12 +480,20 @@ pub fn default_hotkeys() -> BTreeMap<String, Vec<String>> {
     for index in 1..=9 {
         let key = if mac { format!("⌘-{index}") } else { format!("Alt-{index}") };
         hotkeys.insert(format!("tab-{index}"), vec![key]);
+        hotkeys.insert(format!("pane-nav-{index}"), vec![]);
+    }
+    for index in 10..=20 {
+        hotkeys.insert(format!("tab-{index}"), vec![]);
     }
     hotkeys
 }
 
 /// 按版本逐级迁移原始 JSON。新增版本时在这里加一个分支，旧分支永远保留。
 pub fn migrate(mut value: Value) -> Value {
+    // 根节点不是对象（文件损坏成数组 / 字符串）时不迁移，交给反序列化报错；否则下面的索引赋值会 panic
+    if !value.is_object() {
+        return value;
+    }
     let version = value.get("version").and_then(Value::as_u64).unwrap_or(0);
     if version < 1 {
         // v0：尚未发布过的草稿格式，没有字段需要改名，只补版本号
@@ -478,7 +505,16 @@ pub fn migrate(mut value: Value) -> Value {
 /// 解析配置：迁移 → 反序列化 → 补新增的默认快捷键
 pub fn parse(json: &str) -> Result<Config, String> {
     let raw: Value = serde_json::from_str(json).map_err(|err| trf!("配置文件格式错误：{err}", err = err))?;
+    // serde 的结构体也接受数组形式，"[]" 会被悄悄当成默认配置，必须显式拒绝
+    if !raw.is_object() {
+        return Err(trf!("配置文件内容错误：{err}", err = "expected a JSON object"));
+    }
     let migrated = migrate(raw);
+    // 更新版本写的配置：旧版本读进来再保存会丢掉不认识的字段，直接拒绝
+    let version = migrated.get("version").and_then(Value::as_u64).unwrap_or(0);
+    if version > CONFIG_VERSION as u64 {
+        return Err(trf!("配置文件由更新版本的 CTerminal 创建（配置版本 {version}），请升级后再打开", version = version));
+    }
     let mut config: Config = serde_json::from_value(migrated).map_err(|err| trf!("配置文件内容错误：{err}", err = err))?;
     for (action, keys) in default_hotkeys() {
         config.hotkeys.entry(action).or_insert(keys);
@@ -506,6 +542,13 @@ pub fn save_to(path: &Path, config: &Config) -> Result<(), String> {
     let json = serde_json::to_string_pretty(&stored).map_err(|err| err.to_string())?;
     if let Some(dir) = path.parent() {
         fs::create_dir_all(dir).map_err(|err| trf!("创建配置目录失败：{err}", err = err))?;
+    }
+    // 原文件读不出来时（损坏、更新版本写的）界面用默认值运行，这里第一次保存前先把原文件留一份
+    if path.exists() && load_from(path).is_err() {
+        let seconds = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|elapsed| elapsed.as_secs()).unwrap_or(0);
+        let backup = path.with_file_name(format!("config.broken-{seconds}.json"));
+        fs::rename(path, &backup).map_err(|err| trf!("备份原配置文件失败：{err}", err = err))?;
+        crate::log::warn(&format!("原配置文件无法读取，已备份为 {}", backup.display()));
     }
     let temp = path.with_extension("json.tmp");
     fs::write(&temp, json).map_err(|err| trf!("写入配置失败：{err}", err = err))?;
@@ -574,6 +617,19 @@ mod tests {
     use super::*;
 
     #[test]
+    fn profile_hotkeys_and_ligatures_survive_round_trip() {
+        let config = parse(r#"{"version":1,"hotkeys":{"profile:p1":["⌘-Shift-1"]},"terminal":{"ligatures":true}}"#).unwrap();
+        assert_eq!(config.hotkeys["profile:p1"], ["⌘-Shift-1"]);
+        assert!(config.terminal.ligatures);
+        assert!(!TerminalSettings::default().ligatures);
+        let defaults = default_hotkeys();
+        for action in ["ctrl-c", "copy-current-path", "focus-all-tabs", "pane-nav-9", "tab-20", "toggle-last-tab", "pin-tab", "restart-serial-session"] {
+            assert!(defaults.contains_key(action), "缺少默认快捷键条目 {action}");
+        }
+        assert!(defaults["ctrl-c"].is_empty());
+    }
+
+    #[test]
     fn profile_round_trip_uses_type_and_options() {
         let profile = Profile {
             id: "p1".into(),
@@ -620,6 +676,29 @@ mod tests {
     }
 
     #[test]
+    fn newer_config_is_rejected_and_backed_up_before_overwrite() {
+        let json = r#"{"version":99,"futureField":{"keep":true}}"#;
+        assert!(parse(json).unwrap_err().contains("99"));
+        let dir = std::env::temp_dir().join(format!("cterm-config-newer-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("config.json");
+        fs::write(&path, json).unwrap();
+        save_to(&path, &Config::default()).unwrap();
+        let backups: Vec<_> = fs::read_dir(&dir)
+            .unwrap()
+            .flatten()
+            .filter(|entry| entry.file_name().to_string_lossy().starts_with("config.broken-"))
+            .collect();
+        assert_eq!(backups.len(), 1);
+        assert_eq!(fs::read_to_string(backups[0].path()).unwrap(), json);
+        assert!(load_from(&path).is_ok());
+        // 原文件正常时不备份
+        save_to(&path, &Config::default()).unwrap();
+        assert_eq!(fs::read_dir(&dir).unwrap().count(), 2);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
     fn config_never_contains_secret_fields() {
         // 秘密只进钥匙串：配置结构里不允许出现这些字段名，防止以后被“简化”回明文
         let mut config = Config::default();
@@ -640,5 +719,56 @@ mod tests {
             colors: Palette::default().ansi.iter().map(|color| format!("#{color:06x}")).collect(),
         };
         assert_eq!(scheme.to_palette().unwrap(), Palette::default());
+    }
+
+    #[test]
+    fn broken_json_is_an_error_not_a_panic() {
+        assert!(parse("{").is_err());
+        assert!(parse("").is_err());
+        // 根节点不是对象：以前 migrate 里的 value["version"] 会直接 panic，"[]" 还会被当成默认配置
+        for root in ["[]", "\"x\"", "3", "true"] {
+            assert!(parse(root).is_err(), "{root}");
+        }
+        assert!(parse(r#"{"terminal":{"fontSize":"big"}}"#).is_err());
+    }
+
+    #[test]
+    fn unknown_fields_are_ignored() {
+        let config = parse(r#"{"version":1,"futureThing":1,"terminal":{"unknownKey":true,"cursor":"beam"}}"#).unwrap();
+        assert_eq!(config.terminal.cursor, "beam");
+    }
+
+    #[test]
+    fn old_or_odd_version_values_are_migrated() {
+        for json in [r#"{"version":0}"#, r#"{"version":"1"}"#, r#"{"version":null}"#] {
+            assert_eq!(parse(json).unwrap().version, CONFIG_VERSION, "{json}");
+        }
+    }
+
+    #[test]
+    fn user_unbound_hotkey_is_not_restored() {
+        // 用户清空的快捷键保持为空，只补配置里完全没有的动作
+        let config = parse(r#"{"hotkeys":{"copy":[]}}"#).unwrap();
+        assert!(config.hotkeys["copy"].is_empty());
+        assert!(!config.hotkeys["paste"].is_empty());
+    }
+
+    #[test]
+    fn hex_colors_are_strict() {
+        assert_eq!(parse_hex("#ABCdef"), Some(0xabcdef));
+        assert_eq!(parse_hex("cacaca"), None);
+        assert_eq!(parse_hex("#fff"), None);
+        assert_eq!(parse_hex("#+12345"), None);
+        assert_eq!(parse_hex("#-12345"), None);
+        assert_eq!(parse_hex("#cacacaff"), None);
+        let mut scheme = crate::schemes::builtin()[0].clone();
+        scheme.colors.pop();
+        assert!(scheme.to_palette().is_none());
+    }
+
+    #[test]
+    fn missing_file_loads_defaults() {
+        let path = std::env::temp_dir().join(format!("cterm-missing-{}/config.json", std::process::id()));
+        assert_eq!(load_from(&path).unwrap(), Config::default());
     }
 }

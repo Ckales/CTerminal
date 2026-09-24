@@ -9,6 +9,7 @@
 import 'api/settings.dart';
 import 'api/sftp.dart';
 import 'api/terminal.dart';
+import 'api/update.dart';
 
 import 'dart:async';
 import 'dart:convert';
@@ -49,6 +50,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   TermSize dco_decode_box_autoadd_term_size(dynamic raw);
 
   @protected
+  UpdateInfo dco_decode_box_autoadd_update_info(dynamic raw);
+
+  @protected
   int dco_decode_i_32(dynamic raw);
 
   @protected
@@ -77,6 +81,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   TermFrame? dco_decode_opt_box_autoadd_term_frame(dynamic raw);
+
+  @protected
+  UpdateInfo? dco_decode_opt_box_autoadd_update_info(dynamic raw);
 
   @protected
   SftpFileEntry dco_decode_sftp_file_entry(dynamic raw);
@@ -112,6 +119,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void dco_decode_unit(dynamic raw);
 
   @protected
+  UpdateInfo dco_decode_update_info(dynamic raw);
+
+  @protected
   AnyhowException sse_decode_AnyhowException(SseDeserializer deserializer);
 
   @protected
@@ -135,6 +145,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   TermSize sse_decode_box_autoadd_term_size(SseDeserializer deserializer);
+
+  @protected
+  UpdateInfo sse_decode_box_autoadd_update_info(SseDeserializer deserializer);
 
   @protected
   int sse_decode_i_32(SseDeserializer deserializer);
@@ -167,6 +180,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   TermFrame? sse_decode_opt_box_autoadd_term_frame(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  UpdateInfo? sse_decode_opt_box_autoadd_update_info(
     SseDeserializer deserializer,
   );
 
@@ -204,6 +222,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_decode_unit(SseDeserializer deserializer);
 
   @protected
+  UpdateInfo sse_decode_update_info(SseDeserializer deserializer);
+
+  @protected
   void sse_encode_AnyhowException(
     AnyhowException self,
     SseSerializer serializer,
@@ -236,6 +257,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_box_autoadd_term_size(
     TermSize self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_box_autoadd_update_info(
+    UpdateInfo self,
     SseSerializer serializer,
   );
 
@@ -279,6 +306,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_opt_box_autoadd_update_info(
+    UpdateInfo? self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_sftp_file_entry(SftpFileEntry self, SseSerializer serializer);
 
   @protected
@@ -310,6 +343,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_unit(void self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_update_info(UpdateInfo self, SseSerializer serializer);
 }
 
 // Section: wire_class

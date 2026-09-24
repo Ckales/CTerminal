@@ -71,11 +71,21 @@ pub fn spawn(options: &LocalOptions, size: WinSize, tx: Sender<Output>) -> io::R
     let waiter_master = master.clone();
     let waiter_status = exit_status.clone();
     let waiter_tx = tx.clone();
+    let command_name = options.command.clone();
     thread::Builder::new().name("cterm-pty-wait".into()).spawn(move || {
         let message = match child.wait() {
-            Ok(status) if status.success() => String::new(),
-            Ok(status) => trf!("进程已退出，退出码 {code}", code = status.exit_code()),
-            Err(err) => trf!("进程异常结束：{err}", err = err),
+            Ok(status) => {
+                crate::log::info(&format!("本地 shell {command_name} 已退出，退出码 {}", status.exit_code()));
+                if status.success() {
+                    String::new()
+                } else {
+                    trf!("进程已退出，退出码 {code}", code = status.exit_code())
+                }
+            }
+            Err(err) => {
+                crate::log::warn(&format!("本地 shell {command_name} 异常结束：{err}"));
+                trf!("进程异常结束：{err}", err = err)
+            }
         };
         *waiter_status.lock().unwrap() = Some(message.clone());
         // ConPTY 在子进程退出后不会自己关管道，要关掉伪控制台 reader 才会结束

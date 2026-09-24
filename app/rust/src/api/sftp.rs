@@ -109,5 +109,5 @@ pub fn sftp_close(id: u32) {
 /// 下载默认存到“下载”文件夹
 #[flutter_rust_bridge::frb(sync)]
 pub fn downloads_dir() -> String {
-    cterm_core::paths::home_dir().join("Downloads").display().to_string()
+    cterm_core::paths::downloads_dir().display().to_string()
 }

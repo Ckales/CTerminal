@@ -113,7 +113,9 @@ impl Negotiator {
             (DO, other) => replies.extend_from_slice(&[IAC, WONT, other]),
             (WILL, OPT_ECHO) | (WILL, OPT_SGA) => replies.extend_from_slice(&[IAC, DO, option]),
             (WILL, other) => replies.extend_from_slice(&[IAC, DONT, other]),
-            // DONT / WONT：对方拒绝，不用回应
+            // 对方关掉 NAWS 后，resize 不能再发窗口大小
+            (DONT, OPT_NAWS) => self.naws_enabled = false,
+            // 其余 DONT / WONT：对方拒绝，不用回应
             _ => {}
         }
     }
@@ -168,6 +170,7 @@ pub fn connect(options: &TelnetOptions, size: WinSize, tx: Sender<Output>) -> io
     let reader_negotiator = negotiator.clone();
     let shared_size = Arc::new(Mutex::new(size));
     let size_for_reader = shared_size.clone();
+    let target = format!("{}:{}", options.host, options.port);
     thread::Builder::new().name("cterm-telnet".into()).spawn(move || {
         let mut buffer = vec![0u8; 16 * 1024];
         let reason = loop {
@@ -186,6 +189,7 @@ pub fn connect(options: &TelnetOptions, size: WinSize, tx: Sender<Output>) -> io
                 }
             }
         };
+        crate::log::info(&format!("Telnet {target} 会话结束：{reason}"));
         let _ = tx.send(Output::Closed(reason));
     })?;
     Ok(TelnetTransport { stream, negotiator, size: shared_size })
@@ -241,5 +245,75 @@ mod tests {
     fn output_escaping() {
         assert_eq!(escape_output(&[b'a', IAC, b'\r']), [b'a', IAC, IAC, b'\r', 0]);
         assert_eq!(naws(WinSize { cols: 255, rows: 1, ..SIZE }), [IAC, SB, OPT_NAWS, 0, 255, 255, 0, 1, IAC, SE]);
+    }
+
+    #[test]
+    fn iac_and_command_split_across_reads() {
+        let mut negotiator = Negotiator::default();
+        let first = negotiator.feed(&[b'a', IAC], SIZE);
+        assert_eq!(first.data, b"a");
+        let second = negotiator.feed(&[DO], SIZE);
+        assert!(second.data.is_empty() && second.replies.is_empty());
+        let third = negotiator.feed(&[OPT_SGA, b'b'], SIZE);
+        assert_eq!(third.data, b"b");
+        assert_eq!(third.replies, [IAC, WILL, OPT_SGA]);
+        // 转义的 0xFF 被拆在两次读取之间
+        negotiator.feed(&[IAC], SIZE);
+        assert_eq!(negotiator.feed(&[IAC], SIZE).data, [IAC]);
+    }
+
+    #[test]
+    fn refusals_get_no_reply_and_unknown_options_are_declined() {
+        let mut negotiator = Negotiator::default();
+        let parsed = negotiator.feed(&[IAC, WONT, OPT_ECHO, IAC, DONT, OPT_SGA, IAC, WILL, 99, IAC, DO, OPT_TTYPE], SIZE);
+        assert!(parsed.data.is_empty());
+        assert_eq!(parsed.replies, [IAC, DONT, 99, IAC, WILL, OPT_TTYPE]);
+        // NOP / GA 等两字节命令直接丢弃，不混进终端数据
+        let parsed = negotiator.feed(&[IAC, 241, b'x', IAC, 249], SIZE);
+        assert_eq!(parsed.data, b"x");
+        assert!(parsed.replies.is_empty());
+    }
+
+    #[test]
+    fn dont_naws_stops_window_size_updates() {
+        let mut negotiator = Negotiator::default();
+        negotiator.feed(&[IAC, DO, OPT_NAWS], SIZE);
+        assert!(negotiator.naws_enabled);
+        let parsed = negotiator.feed(&[IAC, DONT, OPT_NAWS], SIZE);
+        assert!(parsed.replies.is_empty());
+        assert!(!negotiator.naws_enabled);
+    }
+
+    #[test]
+    fn subnegotiation_is_not_terminal_data() {
+        let mut negotiator = Negotiator::default();
+        // 非 TTYPE 的子协商（含转义的 0xFF）整体丢弃，之后的数据照常输出
+        let parsed = negotiator.feed(&[IAC, SB, 42, IAC, IAC, 7, IAC, SE, b'o', b'k'], SIZE);
+        assert_eq!(parsed.data, b"ok");
+        assert!(parsed.replies.is_empty());
+        // TTYPE IS（0）不是 SEND（1），不应答
+        let parsed = negotiator.feed(&[IAC, SB, OPT_TTYPE, 0, IAC, SE], SIZE);
+        assert!(parsed.replies.is_empty());
+        let parsed = negotiator.feed(&[IAC, SB, OPT_TTYPE, 1, IAC, SE], SIZE);
+        let mut expected = vec![IAC, SB, OPT_TTYPE, 0];
+        expected.extend_from_slice(b"xterm-256color");
+        expected.extend([IAC, SE]);
+        assert_eq!(parsed.replies, expected);
+    }
+
+    #[test]
+    fn naws_uses_current_size_and_escapes_every_byte() {
+        let mut negotiator = Negotiator::default();
+        let size = WinSize { cols: 300, rows: 0xff00 | 50, ..SIZE };
+        let parsed = negotiator.feed(&[IAC, DO, OPT_NAWS], size);
+        assert_eq!(&parsed.replies[..3], [IAC, WILL, OPT_NAWS]);
+        assert_eq!(&parsed.replies[3..], [IAC, SB, OPT_NAWS, 0x01, 0x2c, 0xff, 0xff, 50, IAC, SE]);
+    }
+
+    #[test]
+    fn output_escaping_edge_cases() {
+        assert!(escape_output(b"").is_empty());
+        assert_eq!(escape_output(&[IAC, IAC]), [IAC, IAC, IAC, IAC]);
+        assert_eq!(escape_output(b"a\r\rb\n"), b"a\r\0\r\0b\n");
     }
 }

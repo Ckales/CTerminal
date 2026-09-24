@@ -198,4 +198,23 @@ mod tests {
         assert_eq!(path_style_of("git-bash"), PathStyle::Msys);
         assert_eq!(path_style_of("zsh"), PathStyle::Native);
     }
+
+    #[test]
+    fn etc_shells_tolerates_whitespace_and_empty_input() {
+        assert!(parse_etc_shells("").is_empty());
+        assert!(parse_etc_shells("# only comments\n   \n").is_empty());
+        let shells = parse_etc_shells("  /opt/homebrew/bin/fish  \r\n\t/bin/bash\n");
+        assert_eq!(shells[1].command, "/opt/homebrew/bin/fish");
+        assert_eq!(shells[1].id, "fish");
+        assert_eq!(shells[0].name, "bash");
+    }
+
+    #[test]
+    fn unix_shell_from_path() {
+        let shell = unix_shell("/usr/local/bin/zsh");
+        assert_eq!((shell.id.as_str(), shell.name.as_str(), shell.command.as_str()), ("zsh", "zsh", "/usr/local/bin/zsh"));
+        assert_eq!(unix_shell("nu").name, "nu");
+        assert_eq!(path_style_of("cygwin"), PathStyle::Cygwin);
+        assert_eq!(path_style_of("msys2"), PathStyle::Msys);
+    }
 }

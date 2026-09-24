@@ -28,6 +28,7 @@ pub struct Sftp {
 }
 
 fn fail(action: &str, err: impl std::fmt::Display + Sync) -> String {
+    crate::log::warn(&format!("SFTP {action}失败：{err}"));
     trf!("{action}失败：{err}", action = tr(action), err = err)
 }
 
@@ -154,6 +155,9 @@ impl Sftp {
             }
             let entries = std::fs::read_dir(local).map_err(|err| fail("读取本地目录", err))?;
             for entry in entries.flatten() {
+                if is_linked_dir(&entry) {
+                    continue;
+                }
                 let name = entry.file_name().to_string_lossy().into_owned();
                 self.upload_inner(&entry.path(), &join(remote, &name), done, total, progress)?;
             }
@@ -186,9 +190,20 @@ impl Sftp {
 fn local_size(path: &Path) -> u64 {
     if path.is_dir() {
         let Ok(entries) = std::fs::read_dir(path) else { return 0 };
-        return entries.flatten().map(|entry| local_size(&entry.path())).sum();
+        let mut total = 0;
+        for entry in entries.flatten() {
+            if !is_linked_dir(&entry) {
+                total += local_size(&entry.path());
+            }
+        }
+        return total;
     }
     path.metadata().map(|metadata| metadata.len()).unwrap_or(0)
+}
+
+/// 目录里指向目录的符号链接不跟进：链接回上级会无限递归。拖进来的顶层项是链接时照常跟进
+fn is_linked_dir(entry: &std::fs::DirEntry) -> bool {
+    entry.file_type().map(|file_type| file_type.is_symlink()).unwrap_or(false) && entry.path().is_dir()
 }
 
 #[cfg(test)]
@@ -203,5 +218,40 @@ mod tests {
         assert_eq!(parent("/home"), "/");
         assert_eq!(parent("/"), "/");
         assert_eq!(parent("/home/me/"), "/home");
+    }
+
+    #[test]
+    fn remote_path_edge_cases() {
+        assert_eq!(join("/home/me/", "a b.txt"), "/home/me/a b.txt");
+        assert_eq!(join("relative", "x"), "relative/x");
+        assert_eq!(parent("relative/x"), "relative");
+        assert_eq!(parent("x"), "/");
+        assert_eq!(parent(""), "/");
+        assert_eq!(parent("//"), "/");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn upload_total_skips_linked_directories() {
+        let dir = std::env::temp_dir().join(format!("cterm-sftp-loop-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("sub")).unwrap();
+        std::fs::write(dir.join("sub/a.txt"), b"12345").unwrap();
+        // 指回上级的链接：跟进就会无限递归
+        std::os::unix::fs::symlink(&dir, dir.join("sub/loop")).unwrap();
+        assert_eq!(local_size(&dir), 5);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn upload_total_counts_nested_files() {
+        let dir = std::env::temp_dir().join(format!("cterm-sftp-size-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("sub/deeper")).unwrap();
+        std::fs::write(dir.join("a.txt"), b"12345").unwrap();
+        std::fs::write(dir.join("sub/b.bin"), [0u8; 100]).unwrap();
+        std::fs::write(dir.join("sub/deeper/c"), b"xy").unwrap();
+        assert_eq!(local_size(&dir), 107);
+        assert_eq!(local_size(&dir.join("a.txt")), 5);
+        assert_eq!(local_size(&dir.join("missing")), 0);
+        std::fs::remove_dir_all(dir).unwrap();
     }
 }

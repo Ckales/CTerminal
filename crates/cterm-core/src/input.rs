@@ -129,7 +129,7 @@ fn control_byte(key: &str) -> Option<u8> {
         '\\' | '4' => Some(0x1c),
         ']' | '5' => Some(0x1d),
         '^' | '6' => Some(0x1e),
-        '_' | '-' | '7' => Some(0x1f),
+        '_' | '-' | '/' | '7' => Some(0x1f),
         '?' | '8' => Some(0x7f),
         _ => None,
     }
@@ -278,5 +278,79 @@ mod tests {
         assert!(encode_mouse(&press, TermMode::empty()).is_none());
         let shifted = MouseInput { mods: MOD_SHIFT, ..press };
         assert!(encode_mouse(&shifted, sgr).is_none());
+    }
+
+    #[test]
+    fn function_and_editing_keys() {
+        let plain = TermMode::empty();
+        assert_eq!(encode_key(&key("F1", "", 0), plain).unwrap(), b"\x1bOP");
+        // F1-F4 即使不在应用光标模式也用 SS3；带修饰时改用 CSI 1;m
+        assert_eq!(encode_key(&key("F4", "", MOD_SHIFT), plain).unwrap(), b"\x1b[1;2S");
+        assert_eq!(encode_key(&key("F5", "", 0), plain).unwrap(), b"\x1b[15~");
+        assert_eq!(encode_key(&key("F12", "", MOD_CTRL), plain).unwrap(), b"\x1b[24;5~");
+        assert_eq!(encode_key(&key("Home", "", 0), TermMode::APP_CURSOR).unwrap(), b"\x1bOH");
+        assert_eq!(encode_key(&key("End", "", 0), plain).unwrap(), b"\x1b[F");
+        assert_eq!(encode_key(&key("Delete", "", MOD_CTRL | MOD_SHIFT), plain).unwrap(), b"\x1b[3;6~");
+        // 应用光标模式下带修饰的方向键仍是 CSI 1;m
+        assert_eq!(encode_key(&key("ArrowRight", "", MOD_ALT), TermMode::APP_CURSOR).unwrap(), b"\x1b[1;3C");
+        assert_eq!(encode_key(&key("Enter", "", MOD_ALT), plain).unwrap(), b"\x1b\r");
+        assert_eq!(encode_key(&key("Backspace", "", MOD_CTRL), plain).unwrap(), vec![0x08]);
+        assert_eq!(encode_key(&key("Escape", "", 0), plain).unwrap(), vec![0x1b]);
+    }
+
+    #[test]
+    fn control_symbols_and_combinations() {
+        let plain = TermMode::empty();
+        assert_eq!(encode_key(&key(" ", " ", MOD_CTRL), plain).unwrap(), vec![0]);
+        assert_eq!(encode_key(&key("/", "/", MOD_CTRL), plain).unwrap(), vec![0x1f]);
+        assert_eq!(encode_key(&key("?", "?", MOD_CTRL), plain).unwrap(), vec![0x7f]);
+        // Ctrl 字母不分大小写
+        assert_eq!(encode_key(&key("C", "C", MOD_CTRL | MOD_SHIFT), plain).unwrap(), vec![3]);
+        assert_eq!(encode_key(&key("c", "c", MOD_CTRL | MOD_ALT), plain).unwrap(), vec![0x1b, 3]);
+        // 没有对应控制字符的键不发送，交给界面
+        assert!(encode_key(&key("é", "é", MOD_CTRL), plain).is_none());
+        assert!(encode_key(&key("Shift", "", 0), plain).is_none());
+        assert_eq!(encode_key(&key("b", "B", MOD_ALT | MOD_SHIFT), plain).unwrap(), b"\x1bB");
+    }
+
+    #[test]
+    fn paste_normalizes_newlines() {
+        assert_eq!(paste_bytes("a\r\nb\nc\rd", false), b"a\rb\rc\rd");
+        assert_eq!(paste_bytes("", true), b"\x1b[200~\x1b[201~");
+        assert_eq!(paste_bytes("l1\r\nl2", true), b"\x1b[200~l1\rl2\x1b[201~");
+    }
+
+    #[test]
+    fn mouse_release_wheel_motion_and_modifiers() {
+        let click = TermMode::MOUSE_REPORT_CLICK;
+        let press = MouseInput { action: MouseAction::Press, button: 2, col: 0, row: 0, mods: MOD_ALT | MOD_CTRL };
+        // X10：右键 2 + Alt 8 + Ctrl 16
+        assert_eq!(encode_mouse(&press, click).unwrap(), [0x1b, b'[', b'M', 32 + 26, 33, 33]);
+        // X10 松开统一报 3，保留修饰位
+        let release = MouseInput { action: MouseAction::Release, ..press.clone() };
+        assert_eq!(encode_mouse(&release, click).unwrap(), [0x1b, b'[', b'M', 32 + 27, 33, 33]);
+        // 滚轮：SGR 用 64/65，没有松开事件
+        let wheel = MouseInput::wheel(false, 9, 9);
+        assert_eq!(encode_mouse(&wheel, click | TermMode::SGR_MOUSE).unwrap(), b"\x1b[<65;10;10M");
+        let wheel_release = MouseInput { action: MouseAction::Release, ..wheel };
+        assert!(encode_mouse(&wheel_release, click).is_none());
+        // 移动：只有 1002 在按键拖动时、1003 任何时候才上报
+        let drag = MouseInput { action: MouseAction::Move, button: 0, col: 1, row: 1, mods: 0 };
+        let hover = MouseInput { button: 3, ..drag.clone() };
+        assert!(encode_mouse(&drag, click).is_none());
+        assert_eq!(encode_mouse(&drag, TermMode::MOUSE_DRAG | TermMode::SGR_MOUSE).unwrap(), b"\x1b[<32;2;2M");
+        assert!(encode_mouse(&hover, TermMode::MOUSE_DRAG).is_none());
+        assert_eq!(encode_mouse(&hover, TermMode::MOUSE_MOTION | TermMode::SGR_MOUSE).unwrap(), b"\x1b[<35;2;2M");
+    }
+
+    #[test]
+    fn mouse_large_coordinates() {
+        let far = MouseInput { action: MouseAction::Press, button: 0, col: 299, row: 0, mods: 0 };
+        // 经典编码超过 223 列无法表示
+        assert!(encode_mouse(&far, TermMode::MOUSE_REPORT_CLICK).is_none());
+        // UTF-8 扩展：32 + 300 = U+014C，两字节
+        let utf8 = encode_mouse(&far, TermMode::MOUSE_REPORT_CLICK | TermMode::UTF8_MOUSE).unwrap();
+        assert_eq!(utf8, [0x1b, b'[', b'M', 32, 0xc5, 0x8c, 33]);
+        assert_eq!(encode_mouse(&far, TermMode::MOUSE_REPORT_CLICK | TermMode::SGR_MOUSE).unwrap(), b"\x1b[<0;300;1M");
     }
 }
