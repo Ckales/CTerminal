@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:flutter/cupertino.dart' show CupertinoIcons;
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 
@@ -86,7 +87,7 @@ class AppTabBar extends StatelessWidget {
     );
   }
 
-  Widget _settingsButton(AppState app) => _ChromeButton(icon: Icons.settings_outlined, tooltip: tr('设置'), onTap: () => app.openSettings());
+  Widget _settingsButton(AppState app) => _ChromeButton(icon: CupertinoIcons.gear, tooltip: tr('设置'), onTap: () => app.openSettings());
 }
 
 /// 空白处拖动窗口、双击缩放（macOS 标题栏行为）
@@ -172,7 +173,7 @@ class _TabItemState extends State<_TabItem> {
       case TerminalTab():
         icon = profileIcon(tab.focused.profile);
       case SettingsTab():
-        icon = Icons.settings_outlined;
+        icon = CupertinoIcons.gear;
       case WelcomeTab():
         icon = Icons.waving_hand_outlined;
     }

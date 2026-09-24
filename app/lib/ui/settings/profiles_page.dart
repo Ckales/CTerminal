@@ -347,7 +347,7 @@ class _ProfileEditorState extends State<ProfileEditor> {
   Widget _switch(String label, String key, {String? help}) => SettingRow(
         label: label,
         help: help,
-        control: Switch(value: _options[key] == true, onChanged: (value) => _setOption(key, value)),
+        control: CompactSwitch(value: _options[key] == true, onChanged: (value) => _setOption(key, value)),
       );
 
   /// 每行一项的列表字段（参数、私钥、环境变量）
@@ -446,7 +446,7 @@ class _ProfileEditorState extends State<ProfileEditor> {
         SettingRow(
           label: '禁用动态标题',
           help: '标签页始终显示配置名，不跟随程序设置的标题',
-          control: Switch(value: _profile['disableDynamicTitle'] == true, onChanged: (value) => _set('disableDynamicTitle', value)),
+          control: CompactSwitch(value: _profile['disableDynamicTitle'] == true, onChanged: (value) => _set('disableDynamicTitle', value)),
         ),
       ]),
       ...switch (_type) {

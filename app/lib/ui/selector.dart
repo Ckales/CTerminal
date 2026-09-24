@@ -1,3 +1,4 @@
+import 'package:flutter/cupertino.dart' show CupertinoIcons;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -106,7 +107,7 @@ class _SelectorDialogState extends State<SelectorDialog> {
                   tooltip: tr('编辑'),
                   iconSize: 15,
                   visualDensity: VisualDensity.compact,
-                  icon: Icon(Icons.settings_outlined, color: colors.textDim),
+                  icon: Icon(CupertinoIcons.gear, color: colors.textDim),
                   onPressed: () {
                     Navigator.of(context).pop();
                     item.onEdit!();

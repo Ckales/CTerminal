@@ -89,10 +89,27 @@ class ConfigSwitch extends StatelessWidget {
     return SettingRow(
       label: label,
       help: help,
-      control: Switch(
+      control: CompactSwitch(
         value: readPath(app.config, path) == true,
         onChanged: (value) => app.updateConfig((config) => writePath(config, path, value)),
       ),
+    );
+  }
+}
+
+/// 桌面尺寸的开关：Material 开关按比例缩到 34×20
+class CompactSwitch extends StatelessWidget {
+  const CompactSwitch({super.key, required this.value, required this.onChanged});
+
+  final bool value;
+  final ValueChanged<bool> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: 34,
+      height: 20,
+      child: FittedBox(child: Switch(value: value, onChanged: onChanged)),
     );
   }
 }
@@ -124,6 +141,7 @@ class ConfigDropdown extends StatelessWidget {
   }
 }
 
+/// 下拉选择：外观同输入框，展开后是与右键菜单同款的紧凑列表，宽度跟随父级 SizedBox
 class ChoiceDropdown extends StatelessWidget {
   const ChoiceDropdown({super.key, required this.value, required this.options, required this.onChanged});
 
@@ -136,22 +154,48 @@ class ChoiceDropdown extends StatelessWidget {
     final colors = AppTheme.of(context);
     final entries = Map.of(options);
     // 配置里是选项之外的值（手改过配置文件）时如实显示，不偷偷替换
-    if (!entries.containsKey(value)) entries[value] = value.isEmpty ? tr('（未设置）') : value;
-    return DropdownButtonFormField<String>(
-      // 值在外部变化时（重置、重新加载配置）要重建，否则表单字段会保留旧状态
-      key: ValueKey(value),
-      initialValue: value,
-      isExpanded: true,
-      isDense: true,
-      dropdownColor: colors.surfaceRaised,
-      style: TextStyle(fontSize: 13, color: colors.text),
-      items: [
-        for (final entry in entries.entries)
-          DropdownMenuItem(value: entry.key, child: Text(tr(entry.value), overflow: TextOverflow.ellipsis)),
-      ],
-      onChanged: (value) {
-        if (value != null) onChanged(value);
-      },
+    if (!entries.containsKey(value)) entries[value] = value.isEmpty ? '（未设置）' : value;
+    return LayoutBuilder(
+      builder: (context, constraints) => PopupMenuButton<String>(
+        tooltip: '',
+        initialValue: value,
+        position: PopupMenuPosition.under,
+        offset: const Offset(0, 4),
+        constraints: BoxConstraints(minWidth: constraints.maxWidth, maxWidth: constraints.maxWidth),
+        onSelected: onChanged,
+        itemBuilder: (context) => [
+          for (final entry in entries.entries)
+            PopupMenuItem(
+              value: entry.key,
+              height: 30,
+              child: Row(children: [
+                Expanded(
+                  child: Text(
+                    tr(entry.value),
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(fontSize: 13, color: entry.key == value ? colors.accent : colors.text),
+                  ),
+                ),
+                if (entry.key == value) Icon(Icons.check, size: 14, color: colors.accent),
+              ]),
+            ),
+        ],
+        child: Container(
+          height: 30,
+          padding: const EdgeInsets.only(left: 10, right: 6),
+          decoration: BoxDecoration(
+            color: colors.surfaceRaised,
+            border: Border.all(color: colors.border),
+            borderRadius: BorderRadius.circular(4),
+          ),
+          child: Row(children: [
+            Expanded(
+              child: Text(tr(entries[value]!), overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 13, color: colors.text)),
+            ),
+            Icon(Icons.keyboard_arrow_down, size: 16, color: colors.textDim),
+          ]),
+        ),
+      ),
     );
   }
 }

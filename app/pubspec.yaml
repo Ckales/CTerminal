@@ -14,6 +14,7 @@ dependencies:
   cterminal_rust:
     path: rust_builder
   flutter_rust_bridge: 2.13.0
+  cupertino_icons: ^1.0.9
 
 dev_dependencies:
   flutter_test:
