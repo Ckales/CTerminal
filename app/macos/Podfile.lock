@@ -1,0 +1,22 @@
+PODS:
+  - cterminal_rust (0.0.1):
+    - FlutterMacOS
+  - FlutterMacOS (1.0.0)
+
+DEPENDENCIES:
+  - cterminal_rust (from `Flutter/ephemeral/.symlinks/plugins/cterminal_rust/macos`)
+  - FlutterMacOS (from `Flutter/ephemeral`)
+
+EXTERNAL SOURCES:
+  cterminal_rust:
+    :path: Flutter/ephemeral/.symlinks/plugins/cterminal_rust/macos
+  FlutterMacOS:
+    :path: Flutter/ephemeral
+
+SPEC CHECKSUMS:
+  cterminal_rust: 5d5a9c0ab168e0778b2a23ef6f241da5e8c4af65
+  FlutterMacOS: c232990155153907050900a2e175c7773903ba4e
+
+PODFILE CHECKSUM: 1e95c36afbfd1cb6423ceca4de7a8e1b256fb6ac
+
+COCOAPODS: 1.17.0

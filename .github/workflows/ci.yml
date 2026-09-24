@@ -1,0 +1,39 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+      - name: 测试（Rust 核心 + Dart + 真实内核界面测试）
+        run: sh app/tool/test.sh
+      - name: 静态检查
+        working-directory: app
+        run: flutter analyze
+      - name: 构建 macOS
+        working-directory: app
+        run: flutter build macos --release
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+      - name: Rust 核心测试
+        working-directory: crates/cterm-core
+        run: cargo test
+      - name: 构建 Windows
+        working-directory: app
+        run: flutter build windows --release

@@ -1,0 +1,24 @@
+name: cterminal
+description: "CTerminal：跨平台桌面终端（Flutter 界面 + Rust 内核）"
+publish_to: 'none'
+
+# 与 lib/version.dart、crates/cterm-core/Cargo.toml 保持一致
+version: 0.1.0+1
+
+environment:
+  sdk: ^3.13.4
+
+dependencies:
+  flutter:
+    sdk: flutter
+  cterminal_rust:
+    path: rust_builder
+  flutter_rust_bridge: 2.13.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true

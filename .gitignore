@@ -1,0 +1,27 @@
+# Rust
+target/
+
+# Flutter / Dart
+.dart_tool/
+build/
+.flutter-plugins-dependencies
+*.iml
+.idea/
+.vscode/
+
+# 凭据与签名材料
+.env
+.env.*
+*.p12
+*.pfx
+*.cer
+*.mobileprovision
+*.provisionprofile
+*.pem
+*.key
+id_rsa*
+id_ed25519*
+
+# OS
+.DS_Store
+Thumbs.db
