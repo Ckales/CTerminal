@@ -142,6 +142,19 @@ struct Client {
 
 impl Client {
     fn open(port: u16, known_hosts: &std::path::Path) -> Client {
+        Client::open_with(port, known_hosts, |_| {})
+    }
+
+    /// customize：在默认的测试 SSH 选项上再改几项
+    fn open_with(port: u16, known_hosts: &std::path::Path, customize: impl FnOnce(&mut SshOptions)) -> Client {
+        let mut options = SshOptions {
+            host: "127.0.0.1".into(),
+            port,
+            user: "tester".into(),
+            auth: "password".into(),
+            ..Default::default()
+        };
+        customize(&mut options);
         let mut config = Config::default();
         config.ssh.known_hosts_file = known_hosts.display().to_string();
         config.ssh.use_agent = false;
@@ -149,13 +162,7 @@ impl Client {
             // 每次一个新 id：密码查询走系统钥匙串，保证查不到任何已保存的项
             id: format!("test-ssh-{}-{port}", std::process::id()),
             name: "test".into(),
-            kind: ProfileKind::Ssh(SshOptions {
-                host: "127.0.0.1".into(),
-                port,
-                user: "tester".into(),
-                auth: "password".into(),
-                ..Default::default()
-            }),
+            kind: ProfileKind::Ssh(options),
             ..Default::default()
         };
         let (tx, events) = mpsc::channel();
@@ -468,4 +475,48 @@ fn sftp_list_upload_download_rename_remove() {
     sftp.close();
     client.session.close();
     let _ = std::fs::remove_dir_all(&base);
+}
+
+/// ProxyCommand：目标主机名只存在于配置里，只有经代理命令（nc 连本机端口）才连得上；
+/// 代理的 stderr 暗色显示在终端里；会话释放后代理子进程被杀掉并回收（不留僵尸）
+#[cfg(unix)]
+#[test]
+fn proxy_command_carries_the_connection_and_is_reaped() {
+    // 需要 nc：macOS 与常见 Linux 发行版自带；没有时跳过（Windows 上整个测试不编译）
+    let has_nc = std::process::Command::new("sh").args(["-c", "command -v nc"]).output().is_ok_and(|output| output.status.success());
+    if !has_nc {
+        eprintln!("跳过：找不到 nc");
+        return;
+    }
+    let (port, _server) = start_server();
+    let dir = std::env::temp_dir().join(format!("cterm-ssh-proxy-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let pid_file = dir.join("proxy.pid");
+
+    let client = Client::open_with(port, &dir.join("known_hosts"), |options| {
+        options.host = "proxy-target.example.com".into();
+        // nc 结束后这个 sh 还要 sleep 30 秒：只有被主动杀掉，它才会立即消失
+        options.proxy_command = format!("sh -c 'echo $$ > {}; echo via-proxy %r@%h >&2; nc 127.0.0.1 %p; sleep 30'", pid_file.display());
+    });
+    client.wait_for("via-proxy tester@proxy-target.example.com");
+    client.wait_for("无法确认主机 proxy-target.example.com");
+    client.type_line("once");
+    client.wait_for("的密码：");
+    client.type_line("s3cret");
+    client.wait_for("保存到系统钥匙串");
+    client.type_line("n");
+    client.wait_for("welcome to test");
+    client.type_line("bye");
+    assert_eq!(client.wait_exit(), "");
+
+    let pid = std::fs::read_to_string(&pid_file).unwrap().trim().to_string();
+    drop(client);
+    // kill -0 对僵尸进程也会成功，失败才说明进程已被回收
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while std::process::Command::new("kill").args(["-0", &pid]).stderr(std::process::Stdio::null()).status().unwrap().success() {
+        assert!(Instant::now() < deadline, "代理子进程 {pid} 没有被回收");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    let _ = std::fs::remove_dir_all(&dir);
 }

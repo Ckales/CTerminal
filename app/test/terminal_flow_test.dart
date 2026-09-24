@@ -9,6 +9,7 @@ import 'dart:io';
 
 import 'package:cterminal/app_state.dart';
 import 'package:cterminal/src/rust/api/settings.dart' as rust;
+import 'package:cterminal/src/rust/api/terminal.dart';
 import 'package:cterminal/src/rust/frb_generated.dart';
 import 'package:cterminal/terminal/terminal_session.dart';
 import 'package:cterminal/ui/app_shell.dart';
@@ -204,6 +205,107 @@ void main() {
 
       await press(tester, LogicalKeyboardKey.enter);
       await waitFor(tester, () => !session.exited && screen(session).contains(r'$'), what: '重启');
+      await tester.pumpWidget(const SizedBox());
+      app.dispose();
+    });
+
+    testWidgets('固定标签页、上一次标签页、按序号聚焦窗格、配置快捷键', (tester) async {
+      final app = await boot(tester);
+      final first = app.tabs.single;
+      app.runAction('new-tab');
+      await waitFor(tester, () => app.tabs.length == 2, what: '新建标签页');
+      final second = app.tabs[1];
+
+      expect(app.runAction('toggle-last-tab'), isTrue);
+      expect(app.activeTab, first);
+      app.runAction('toggle-last-tab');
+      expect(app.activeTab, second);
+
+      // 固定：排到最左，“关闭其他”关不掉它，单独关闭要确认
+      app.runAction('pin-tab');
+      expect(app.tabs, [second, first]);
+      expect(second.pinned, isTrue);
+      app.closeOtherTabs(first);
+      expect(app.tabs, [second, first]);
+      app.confirmClosePinned = (_) async => false;
+      app.selectTab(0);
+      app.runAction('close-tab');
+      await tester.pump();
+      expect(app.tabs.length, 2, reason: '取消确认时固定的标签页不关闭');
+      // 新标签页不会插进固定区
+      app.runAction('new-tab');
+      await waitFor(tester, () => app.tabs.length == 3, what: '固定标签页后新建');
+      expect(app.tabs.first, second);
+      await tester.runAsync(app.saveState);
+      final state = jsonDecode((await tester.runAsync(rust.stateLoad))!) as Map<String, dynamic>;
+      expect([for (final tab in state['tabs'] as List) (tab as Map)['pinned']], [true, false, false]);
+
+      // 按序号聚焦窗格
+      app.selectTab(1);
+      final tab = app.activeTab as TerminalTab;
+      app.runAction('split-right');
+      expect(tab.focused, tab.sessions[1]);
+      expect(app.runAction('pane-nav-1'), isTrue);
+      expect(tab.focused, tab.sessions[0]);
+      expect(app.runAction('pane-nav-5'), isFalse);
+      expect(app.runAction('restart-ssh-session'), isFalse, reason: '本地会话不响应重启 SSH');
+
+      // 配置快捷键：profile:<id>
+      await tester.runAsync(() => app.updateConfig((config) => config['hotkeys']['profile:test:sh'] = ['⌘-Shift-9']));
+      final before = app.tabs.length;
+      await press(tester, LogicalKeyboardKey.digit9, meta: true, shift: true);
+      await waitFor(tester, () => app.tabs.length == before + 1, what: '配置快捷键打开标签页');
+      expect(app.activeSession!.profileId, 'test:sh');
+
+      await tester.pumpWidget(const SizedBox());
+      app.dispose();
+    });
+
+    testWidgets('智能 Ctrl-C、复制当前路径、同时输入到所有标签页', (tester) async {
+      final app = await boot(tester);
+      final session = app.activeSession!;
+      String? clipboard;
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(SystemChannels.platform, (call) async {
+        if (call.method == 'Clipboard.setData') clipboard = (call.arguments as Map)['text'] as String?;
+        return null;
+      });
+
+      tester.testTextInput.enterText('echo marker-one');
+      await press(tester, LogicalKeyboardKey.enter);
+      await waitFor(tester, () => screen(session).split('\n').contains('marker-one'), what: 'echo 输出');
+      app.runAction('select-all');
+      expect(app.runAction('ctrl-c'), isTrue);
+      expect(clipboard, contains('marker-one'), reason: '有选区时复制');
+      expect(termSelectionText(id: session.id), isNull, reason: '复制后清除选区');
+
+      tester.testTextInput.enterText('sleep 30');
+      await press(tester, LogicalKeyboardKey.enter);
+      await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 200)));
+      app.runAction('ctrl-c');
+      tester.testTextInput.enterText('echo after-smart-ctrl-c');
+      await press(tester, LogicalKeyboardKey.enter);
+      await waitFor(tester, () => screen(session).contains('\nafter-smart-ctrl-c'), what: '无选区时发送 ^C');
+
+      clipboard = null;
+      expect(app.runAction('copy-current-path'), isTrue);
+      expect(clipboard, isNotNull);
+      expect(Directory(clipboard!).existsSync(), isTrue);
+
+      app.runAction('new-tab');
+      await waitFor(tester, () => app.tabs.length == 2 && screen(app.activeSession!).contains(r'$'), what: '第二个标签页');
+      final other = app.activeSession!;
+      app.runAction('focus-all-tabs');
+      tester.testTextInput.enterText('echo both-tabs');
+      await press(tester, LogicalKeyboardKey.enter);
+      await waitFor(
+        tester,
+        () => screen(session).split('\n').contains('both-tabs') && screen(other).split('\n').contains('both-tabs'),
+        what: '两个标签页都收到输入',
+      );
+      app.runAction('focus-all-tabs');
+      expect(app.inputTargets(), [other]);
+
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(SystemChannels.platform, null);
       await tester.pumpWidget(const SizedBox());
       app.dispose();
     });

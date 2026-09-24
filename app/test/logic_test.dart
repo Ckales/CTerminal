@@ -1,6 +1,8 @@
 import 'package:cterminal/cli.dart';
 import 'package:cterminal/hotkeys.dart';
 import 'package:cterminal/pane_tree.dart';
+import 'package:cterminal/src/rust/api/terminal.dart';
+import 'package:cterminal/terminal/terminal_painter.dart';
 import 'package:cterminal/ui/profile_icons.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -18,6 +20,44 @@ void main() {
     test('格式化后能解析回来', () {
       const hotkey = Hotkey(key: '-', meta: true, shift: true);
       expect(Hotkey.parse(hotkey.format()), hotkey);
+    });
+  });
+
+  group('动作名', () {
+    test('按序号生成的动作都有名字', () {
+      expect(hotkeyActionNames.containsKey('tab-20'), isTrue);
+      expect(hotkeyActionNames.containsKey('pane-nav-9'), isTrue);
+      expect(actionName('tab-15'), '切换到标签页 15');
+      expect(actionName('pane-nav-3'), '聚焦第 3 个窗格');
+      expect(actionName('focus-all-tabs'), '同时输入到所有标签页');
+    });
+  });
+
+  group('连字', () {
+    TermLine line(String text) => TermLine(hash: 42, runs: [TermRun(col: 0, width: text.length, text: text, fg: 0xffffff, bg: 0, flags: 0)]);
+
+    test('光标所在格单独成段，其余按格子定位', () {
+      final metrics = TerminalMetrics(fontFamily: 'Menlo', fontSize: 14, lineHeight: 1.2, ligatures: true);
+      final cache = ParagraphCache();
+      final whole = cache.line(line('a->b'), metrics);
+      expect(whole.pieces.length, 1);
+      final split = cache.line(line('a->b'), metrics, cursorCol: 2);
+      expect([for (final piece in split.pieces) piece.x], [0, 2 * metrics.cellWidth, 3 * metrics.cellWidth]);
+      expect([for (final piece in split.pieces) piece.width], [2 * metrics.cellWidth, metrics.cellWidth, metrics.cellWidth]);
+      final atStart = cache.line(line('a->b'), metrics, cursorCol: 0);
+      expect([for (final piece in atStart.pieces) piece.x], [0, metrics.cellWidth]);
+      cache.clear();
+    });
+
+    test('开关连字会让段落缓存失效', () {
+      final off = TerminalMetrics(fontFamily: 'Menlo', fontSize: 14, lineHeight: 1.2);
+      final on = TerminalMetrics(fontFamily: 'Menlo', fontSize: 14, lineHeight: 1.2, ligatures: true);
+      expect(off.sameAs(on), isFalse);
+      final cache = ParagraphCache();
+      final first = cache.line(line('!='), off);
+      expect(identical(cache.line(line('!='), off), first), isTrue);
+      expect(identical(cache.line(line('!='), on), first), isFalse);
+      cache.clear();
     });
   });
 

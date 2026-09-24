@@ -62,6 +62,9 @@ void main() {
     await _loadFont('Roboto', ['/System/Library/Fonts/PingFang.ttc', '/System/Library/Fonts/Supplemental/Arial Unicode.ttf']);
     await _loadFont('Menlo', ['/System/Library/Fonts/Menlo.ttc']);
     await _loadFont('PingFang SC', ['/System/Library/Fonts/PingFang.ttc']);
+    // 连字截图用：本机没装连字字体时借用 JetBrains IDE 自带的，找不到就跳过那两张
+    const jbr = '/Applications/GoLand.app/Contents/jbr/Contents/Home/lib/fonts';
+    await _loadFont('JetBrains Mono', ['$jbr/JetBrainsMono-Regular.ttf', '$jbr/JetBrainsMono-Bold.ttf']);
   });
 
   testWidgets('截图', (tester) async {
@@ -144,6 +147,39 @@ void main() {
     app.runAction('search');
     await _settle(tester);
     await _shot(tester, '23-search');
+
+    if (File('/Applications/GoLand.app/Contents/jbr/Contents/Home/lib/fonts/JetBrainsMono-Regular.ttf').existsSync()) {
+      await tester.runAsync(() => app.updateConfig((config) {
+            config['terminal']['font'] = 'JetBrains Mono';
+            config['terminal']['ligatures'] = true;
+          }));
+      await tester.runAsync(() => app.newTab(profile: {
+            'id': 'shot:liga',
+            'name': 'ligatures',
+            'type': 'local',
+            'options': {
+              'command': '/bin/sh',
+              'args': ['-c', r'printf "a -> b  != c  >= d  => e  === f  <= g  |> h  :: i  www\n\033[32mif (x != y && y >= 0) { return a => b; }\033[0m\n"; exec /bin/sh'],
+              'env': [
+                ['PS1', r'$ '],
+              ],
+            },
+          }));
+      // 顺便看固定标签页：第一个标签页固定后只显示序号和图标
+      app.togglePin(app.tabs.first);
+      await _settle(tester);
+      // 光标停在 -> 的 > 上：光标格单独成段，不和 - 连成一个字形
+      tester.testTextInput.enterText('x->y != z');
+      await _settle(tester);
+      for (var i = 0; i < 7; i++) {
+        await tester.sendKeyEvent(LogicalKeyboardKey.arrowLeft);
+      }
+      await _settle(tester);
+      await _shot(tester, '24-ligatures-on');
+      await tester.runAsync(() => app.updateConfig((config) => config['terminal']['ligatures'] = false));
+      await _settle(tester);
+      await _shot(tester, '25-ligatures-off');
+    }
 
     await tester.runAsync(() => app.updateConfig((config) => config['appearance']['theme'] = 'light'));
     app.openSettings('appearance');

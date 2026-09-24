@@ -9,7 +9,7 @@ final _literal = RegExp(r"'((?:[^'\\\n]|\\.)*[一-鿿](?:[^'\\\n]|\\.)*)'");
 
 /// 不是界面文字：日志、语言选项本身、按序号生成的动作名
 bool _skip(String line, String text) =>
-    line.contains('debugPrint') || text == '简体中文' || RegExp(r'^切换到标签页 \d$').hasMatch(text);
+    line.contains('debugPrint') || text == '简体中文' || RegExp(r'^(切换到标签页 \$n|聚焦第 \$n 个窗格)$').hasMatch(text);
 
 void main() {
   test('所有中文界面文字都有英文翻译', () {

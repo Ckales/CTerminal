@@ -56,6 +56,15 @@ class MainFlutterWindow: NSWindow, NSWindowDelegate {
       case "setGlobalHotkey":
         GlobalHotkey.shared.register(call.arguments as? [String: Any]) { [weak self] in self?.toggleVisibility() }
         result(nil)
+      case "pickFiles":
+        // ZMODEM 上传（远端 rz 在等）：多选文件，取消返回空列表
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = true
+        panel.beginSheetModal(for: self) { response in
+          result(response == .OK ? panel.urls.map { $0.path } : [String]())
+        }
       case "newWindow":
         // Flutter 桌面多窗口尚未稳定，新窗口 = 新开一个进程实例
         let configuration = NSWorkspace.OpenConfiguration()
