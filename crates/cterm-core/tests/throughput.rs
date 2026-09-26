@@ -26,6 +26,7 @@ fn fifty_megabytes_of_colored_output() {
         word_separators: " ".into(),
         scroll_on_input: true,
         palette: Palette::default(),
+        highlights: Vec::new(),
         bold_is_bright: true,
     };
     let (session, tx) = Session::new(options, WinSize { cols: 200, rows: 60, cell_width: 8, cell_height: 16 }, sink);

@@ -17,6 +17,10 @@ Future<String> configLoad() =>
 Future<String> configSave({required String json}) =>
     RustLib.instance.api.crateApiSettingsConfigSave(json: json);
 
+/// 高亮规则的正则写法有误时返回错误说明，正确返回空串
+String highlightPatternError({required String pattern}) => RustLib.instance.api
+    .crateApiSettingsHighlightPatternError(pattern: pattern);
+
 String configDefaults() =>
     RustLib.instance.api.crateApiSettingsConfigDefaults();
 

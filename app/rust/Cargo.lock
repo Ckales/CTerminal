@@ -677,6 +677,7 @@ dependencies = [
  "keyring",
  "libc",
  "portable-pty",
+ "regex",
  "russh",
  "russh-sftp",
  "serde",

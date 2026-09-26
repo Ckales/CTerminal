@@ -23,6 +23,8 @@ russh-sftp = "3"
 # 新版本检查：rustls + ring（与 russh 共用 ring），不引入 openssl
 ureq = { version = "3", default-features = false, features = ["rustls"] }
 zmodem2 = "0.7"
+# 关键字高亮；alacritty_terminal 已间接依赖 regex-automata，不新增下载
+regex = "1"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

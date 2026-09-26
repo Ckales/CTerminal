@@ -15,7 +15,7 @@ fn run(command: &str) -> (Arc<Session>, String) {
         let _ = event_tx.send(event);
     });
     let size = WinSize { cols: 40, rows: 5, cell_width: 8, cell_height: 16 };
-    let options = TermOptions { scrollback: 100, cursor: "block".into(), word_separators: " ".into(), scroll_on_input: true, palette: Palette::default(), bold_is_bright: true };
+    let options = TermOptions { scrollback: 100, cursor: "block".into(), word_separators: " ".into(), scroll_on_input: true, palette: Palette::default(), highlights: Vec::new(), bold_is_bright: true };
     let (session, tx) = Session::new(options, size, sink);
     let local = LocalOptions { command: "/bin/sh".into(), args: vec!["-c".into(), command.into()], ..Default::default() };
     let transport = local::spawn(&local, size, tx).expect("spawn");
@@ -68,7 +68,7 @@ fn cwd_of_running_shell() {
         let _ = event_tx.send(event);
     });
     let size = WinSize { cols: 40, rows: 5, cell_width: 8, cell_height: 16 };
-    let options = TermOptions { scrollback: 100, cursor: "block".into(), word_separators: " ".into(), scroll_on_input: true, palette: Palette::default(), bold_is_bright: true };
+    let options = TermOptions { scrollback: 100, cursor: "block".into(), word_separators: " ".into(), scroll_on_input: true, palette: Palette::default(), highlights: Vec::new(), bold_is_bright: true };
     let (session, tx) = Session::new(options, size, sink);
     let local = LocalOptions { command: "/bin/sleep".into(), args: vec!["2".into()], cwd: "/tmp".into(), ..Default::default() };
     session.attach(Box::new(local::spawn(&local, size, tx).unwrap()));

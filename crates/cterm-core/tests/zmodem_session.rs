@@ -44,7 +44,7 @@ impl Harness {
             let _ = event_tx.send(event);
         });
         let size = WinSize { cols: 100, rows: 10, cell_width: 8, cell_height: 16 };
-        let options = TermOptions { scrollback: 100, cursor: "block".into(), word_separators: " ".into(), scroll_on_input: true, palette: Palette::default(), bold_is_bright: true };
+        let options = TermOptions { scrollback: 100, cursor: "block".into(), word_separators: " ".into(), scroll_on_input: true, palette: Palette::default(), highlights: Vec::new(), bold_is_bright: true };
         let (session, tx) = Session::new(options, size, sink);
         session.set_downloads_dir(dir.join("downloads"));
         let (to_remote, from_session) = mpsc::channel();

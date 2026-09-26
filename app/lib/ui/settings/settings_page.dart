@@ -12,6 +12,7 @@ import '../../update_check.dart';
 import '../../version.dart';
 import '../selector.dart';
 import 'color_schemes_page.dart';
+import 'highlight_page.dart';
 import 'hotkeys_page.dart';
 import 'profiles_page.dart';
 import 'vault_page.dart';
@@ -22,6 +23,7 @@ const _pages = <(String, String, IconData)>[
   ('application', '应用', Icons.apps_outlined),
   ('appearance', '外观', Icons.palette_outlined),
   ('colorScheme', '配色方案', Icons.format_color_fill_outlined),
+  ('highlight', '关键字高亮', Icons.highlight_outlined),
   ('terminal', '终端', Icons.terminal),
   ('profiles', '配置和连接', Icons.dns_outlined),
   ('hotkeys', '快捷键', Icons.keyboard_outlined),
@@ -67,6 +69,7 @@ class SettingsPage extends StatelessWidget {
           child: switch (page) {
             'appearance' => _scroll(const _AppearancePage()),
             'colorScheme' => const ColorSchemesPage(),
+            'highlight' => const HighlightPage(),
             'terminal' => _scroll(const _TerminalPage()),
             'profiles' => ProfilesPage(editId: argument, key: ValueKey('profiles:$argument')),
             'hotkeys' => const HotkeysPage(),

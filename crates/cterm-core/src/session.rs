@@ -20,6 +20,7 @@ use alacritty_terminal::term::{self, Term, TermMode};
 use alacritty_terminal::vte::ansi::{CursorShape, CursorStyle, Processor};
 
 use crate::frame::{self, Frame, Palette};
+use crate::highlight::Highlight;
 use crate::input::{self, KeyInput, MouseInput};
 use crate::zmodem;
 
@@ -92,6 +93,7 @@ pub struct TermOptions {
     /// 输入时滚回底部
     pub scroll_on_input: bool,
     pub palette: Palette,
+    pub highlights: Vec<Highlight>,
     pub bold_is_bright: bool,
 }
 
@@ -143,6 +145,7 @@ pub struct Session {
     term: Arc<FairMutex<Term<Listener>>>,
     transport: SharedTransport,
     palette: Arc<Mutex<Palette>>,
+    highlights: Mutex<Vec<Highlight>>,
     size: Arc<Mutex<WinSize>>,
     wake_pending: Arc<AtomicBool>,
     /// 当前搜索关键词与命中，用于高亮和“下一个”的起点
@@ -186,6 +189,7 @@ impl Session {
             term,
             transport,
             palette,
+            highlights: Mutex::new(options.highlights),
             size: size_cell,
             wake_pending: Arc::new(AtomicBool::new(false)),
             search: Mutex::new(None),
@@ -375,7 +379,8 @@ impl Session {
         let current_match = self.search.lock().unwrap().clone().map(|(_, found)| found);
         let term = self.term.lock();
         let palette = self.palette.lock().unwrap();
-        frame::build(&term, &palette, current_match.as_ref(), self.bold_is_bright)
+        let highlights = self.highlights.lock().unwrap();
+        frame::build(&term, &palette, &highlights, current_match.as_ref(), self.bold_is_bright)
     }
 
     pub fn write(&self, data: &[u8]) {
@@ -516,6 +521,10 @@ impl Session {
 
     pub fn set_palette(&self, palette: Palette) {
         *self.palette.lock().unwrap() = palette;
+    }
+
+    pub fn set_highlights(&self, highlights: Vec<Highlight>) {
+        *self.highlights.lock().unwrap() = highlights;
     }
 
     pub fn clear(&self) {
@@ -704,6 +713,7 @@ mod tests {
                 word_separators: " ".into(),
                 scroll_on_input: true,
                 palette: Palette::default(),
+                highlights: Vec::new(),
                 bold_is_bright: true,
             };
             let (session, tx) = Session::new(options, SIZE, sink);

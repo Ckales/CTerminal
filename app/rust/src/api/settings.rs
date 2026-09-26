@@ -43,6 +43,12 @@ pub fn config_save(json: String) -> Result<String, String> {
     Ok(to_json(&config))
 }
 
+/// 高亮规则的正则写法有误时返回错误说明，正确返回空串
+#[frb(sync)]
+pub fn highlight_pattern_error(pattern: String) -> String {
+    cterm_core::highlight::pattern_error(&pattern)
+}
+
 #[frb(sync)]
 pub fn config_defaults() -> String {
     to_json(&Config::default())

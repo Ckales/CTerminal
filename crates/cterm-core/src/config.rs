@@ -26,6 +26,8 @@ pub struct Config {
     pub application: ApplicationSettings,
     pub ssh: SshSettings,
     pub custom_color_schemes: Vec<ColorScheme>,
+    /// 关键字高亮，靠前的规则优先
+    pub highlight_rules: Vec<HighlightRule>,
     /// 最近使用的 profile id，选择器里排在前面
     pub recent_profiles: Vec<String>,
 }
@@ -42,6 +44,7 @@ impl Default for Config {
             application: ApplicationSettings::default(),
             ssh: SshSettings::default(),
             custom_color_schemes: Vec::new(),
+            highlight_rules: default_highlight_rules(),
             recent_profiles: Vec::new(),
         }
     }
@@ -383,6 +386,41 @@ impl ColorScheme {
             ansi,
         })
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct HighlightRule {
+    pub pattern: String,
+    pub ignore_case: bool,
+    /// 调色板序号 0-15，颜色跟着配色方案走；None = 不改
+    pub foreground: Option<u8>,
+    pub background: Option<u8>,
+    pub bold: bool,
+    pub enabled: bool,
+}
+
+impl Default for HighlightRule {
+    fn default() -> Self {
+        HighlightRule { pattern: String::new(), ignore_case: false, foreground: None, background: None, bold: false, enabled: true }
+    }
+}
+
+fn default_highlight_rules() -> Vec<HighlightRule> {
+    let rule = |pattern: &str, ignore_case: bool, foreground: u8| HighlightRule {
+        pattern: pattern.into(),
+        ignore_case,
+        foreground: Some(foreground),
+        ..HighlightRule::default()
+    };
+    vec![
+        // 中文字在 Unicode 里算单词字符，前后常紧挨着别的字，不能套 \b
+        rule(r"\b(error|fatal|fail(ed|ure)?|panic|exception|denied|refused)\b|失败|错误|异常|拒绝", true, 1),
+        rule(r"\b(warn(ing)?|deprecated)\b|警告", true, 3),
+        rule(r"\b(success(ful)?|succeeded|passed)\b|成功", true, 2),
+        rule(r"\b[0-9]{1,3}(\.[0-9]{1,3}){3}(:[0-9]+)?\b", false, 6),
+        rule(r#"https?://[^\s"'<>]+"#, false, 4),
+    ]
 }
 
 pub fn parse_hex(color: &str) -> Option<u32> {

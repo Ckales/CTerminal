@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use crate::config::{self, Config, Profile, ProfileKind};
 use crate::session::{EventSink, Output, Session, TermOptions, WinSize};
-use crate::{local, log, schemes, serial, ssh, telnet};
+use crate::{highlight, local, log, schemes, serial, ssh, telnet};
 
 pub fn term_options(config: &Config) -> TermOptions {
     TermOptions {
@@ -13,6 +13,7 @@ pub fn term_options(config: &Config) -> TermOptions {
         word_separators: config.terminal.word_separators.clone(),
         scroll_on_input: config.terminal.scroll_on_input,
         palette: schemes::palette_for(config),
+        highlights: highlight::compile(&config.highlight_rules),
         bold_is_bright: config.terminal.bold_is_bright,
     }
 }

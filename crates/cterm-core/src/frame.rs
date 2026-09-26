@@ -14,6 +14,8 @@ use alacritty_terminal::term::{Term, TermMode};
 use alacritty_terminal::vte::ansi::{Color, CursorShape, NamedColor, Rgb};
 use serde::{Deserialize, Serialize};
 
+use crate::highlight::{self, Highlight};
+
 pub const RUN_BOLD: u16 = 1;
 pub const RUN_ITALIC: u16 = 1 << 1;
 pub const RUN_UNDERLINE: u16 = 1 << 2;
@@ -188,10 +190,20 @@ impl Resolver<'_> {
     }
 }
 
-pub fn build<T: EventListener>(term: &Term<T>, palette: &Palette, current_match: Option<&Match>, bold_is_bright: bool) -> Frame {
+pub fn build<T: EventListener>(
+    term: &Term<T>,
+    palette: &Palette,
+    highlights: &[Highlight],
+    current_match: Option<&Match>,
+    bold_is_bright: bool,
+) -> Frame {
     let content = term.renderable_content();
     let resolver = Resolver { palette, overrides: content.colors, bold_is_bright };
     let default_bg = resolver.background();
+    let default_fg = resolver.named(NamedColor::Foreground, false);
+    let ansi: [u32; 16] = std::array::from_fn(|index| resolver.color(Color::Indexed(index as u8), false));
+    // 全屏程序（vim、htop）自己管颜色，不套高亮
+    let highlights = if content.mode.contains(TermMode::ALT_SCREEN) { &[] } else { highlights };
     let cols = term.columns();
     let rows = term.screen_lines();
     let display_offset = content.display_offset;
@@ -205,7 +217,7 @@ pub fn build<T: EventListener>(term: &Term<T>, palette: &Palette, current_match:
         let point = indexed.point;
         if current_line != Some(point.line) {
             if current_line.is_some() {
-                lines.push(finish_line(std::mem::take(&mut runs)));
+                lines.push(finish_line(highlight::apply(std::mem::take(&mut runs), highlights, &ansi, default_fg)));
             }
             current_line = Some(point.line);
         }
@@ -281,7 +293,7 @@ pub fn build<T: EventListener>(term: &Term<T>, palette: &Palette, current_match:
         runs.push(Run { col, width: if wide { 2 } else { 1 }, text, fg, bg, flags });
     }
     if current_line.is_some() {
-        lines.push(finish_line(runs));
+        lines.push(finish_line(highlight::apply(runs, highlights, &ansi, default_fg)));
     }
 
     let cursor_point = content.cursor.point;
@@ -308,7 +320,7 @@ pub fn build<T: EventListener>(term: &Term<T>, palette: &Palette, current_match:
         history_size: term.history_size() as u32,
         alt_screen: content.mode.contains(TermMode::ALT_SCREEN),
         mouse_reporting: content.mode.intersects(TermMode::MOUSE_MODE),
-        foreground: resolver.named(NamedColor::Foreground, false),
+        foreground: default_fg,
         background: default_bg,
         cursor_color: resolver.named(NamedColor::Cursor, false),
     }
@@ -359,11 +371,49 @@ mod tests {
 
     /// 喂一段 VT 输出，返回生成的帧
     fn render(output: &str, bold_is_bright: bool) -> Frame {
+        render_with(output, bold_is_bright, &[])
+    }
+
+    fn render_with(output: &str, bold_is_bright: bool, highlights: &[Highlight]) -> Frame {
         let size = WinSize { cols: 20, rows: 3, cell_width: 8, cell_height: 16 };
         let mut term = Term::new(Config::default(), &size, VoidListener);
         let mut parser: Processor = Processor::new();
         parser.advance(&mut term, output.as_bytes());
-        build(&term, &Palette::default(), None, bold_is_bright)
+        build(&term, &Palette::default(), highlights, None, bold_is_bright)
+    }
+
+    #[test]
+    fn highlight_recolors_plain_text_only() {
+        use crate::config::HighlightRule;
+        let rules = [
+            HighlightRule { pattern: "err(or)?".into(), ignore_case: true, foreground: Some(1), ..HighlightRule::default() },
+            // 与上一条重叠时靠前的优先
+            HighlightRule { pattern: "or".into(), foreground: Some(2), bold: true, ..HighlightRule::default() },
+            HighlightRule { pattern: "ok".into(), background: Some(4), ..HighlightRule::default() },
+        ];
+        let highlights = crate::highlight::compile(&rules);
+        let palette = Palette::default();
+        let frame = render_with("a ERROR b ok\r\n\x1b[32merror\x1b[0m for", true, &highlights);
+
+        let first = &frame.lines[0];
+        assert_eq!(texts(first), ["a", "ERROR", " b", "ok"]);
+        assert_eq!(first.runs[1].fg, palette.ansi[1]);
+        assert_eq!(first.runs[1].col, 2);
+        assert_eq!(first.runs[2].fg, palette.foreground);
+        assert_eq!(first.runs[3].bg, palette.ansi[4]);
+        assert_eq!(first.runs[3].flags & RUN_DEFAULT_BG, 0);
+
+        // 程序自己上色的 error 不动；后面默认色的 or 按第二条规则
+        let second = &frame.lines[1];
+        assert_eq!(texts(second), ["error", " f", "or"]);
+        assert_eq!(second.runs[0].fg, palette.ansi[2]);
+        assert_eq!(second.runs[0].flags & RUN_BOLD, 0);
+        assert_eq!(second.runs[2].fg, palette.ansi[2]);
+        assert_ne!(second.runs[2].flags & RUN_BOLD, 0);
+
+        // 全屏程序里不高亮
+        let alt = render_with("\x1b[?1049hERROR", true, &highlights);
+        assert_eq!(alt.lines[0].runs[0].fg, palette.foreground);
     }
 
     /// 各段文本（去掉行尾补齐的空格段）

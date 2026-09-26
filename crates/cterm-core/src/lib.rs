@@ -5,6 +5,7 @@ pub mod i18n;
 pub mod config;
 pub mod connect;
 pub mod frame;
+pub mod highlight;
 pub mod input;
 pub mod local;
 pub mod log;

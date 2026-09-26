@@ -573,6 +573,7 @@ dependencies = [
  "libc",
  "portable-pty",
  "rand",
+ "regex",
  "russh",
  "russh-sftp",
  "serde",

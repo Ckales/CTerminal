@@ -286,8 +286,11 @@ pub fn term_cwd(id: u32) -> String {
 /// 配色 / 字体等设置变更后，已打开的会话立即换配色
 #[frb(sync)]
 pub fn term_apply_settings() {
-    let palette = cterm_core::schemes::palette_for(&current_config());
+    let config = current_config();
+    let palette = cterm_core::schemes::palette_for(&config);
+    let highlights = cterm_core::highlight::compile(&config.highlight_rules);
     for session in SESSIONS.lock().unwrap().values() {
         session.set_palette(palette.clone());
+        session.set_highlights(highlights.clone());
     }
 }
