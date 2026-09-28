@@ -414,12 +414,34 @@ fn default_highlight_rules() -> Vec<HighlightRule> {
         ..HighlightRule::default()
     };
     vec![
-        // 中文字在 Unicode 里算单词字符，前后常紧挨着别的字，不能套 \b
-        rule(r"\b(error|fatal|fail(ed|ure)?|panic|exception|denied|refused)\b|失败|错误|异常|拒绝", true, 1),
-        rule(r"\b(warn(ing)?|deprecated)\b|警告", true, 3),
-        rule(r"\b(success(ful)?|succeeded|passed)\b|成功", true, 2),
-        rule(r"\b[0-9]{1,3}(\.[0-9]{1,3}){3}(:[0-9]+)?\b", false, 6),
+        // URL 放最前，里面的 IP、error 等字样跟着整条链接一个颜色
         rule(r#"https?://[^\s"'<>]+"#, false, 4),
+        // 中文字在 Unicode 里算单词字符，前后常紧挨着别的字，不能套 \b
+        rule(
+            r"\b(errors?|fatal|fail(s|ed|ure)?|panic(ked)?|exception|critical|crash(ed)?|abort(ed)?|denied|refused|unreachable|timeout|timed out|not found|no such file|invalid|unauthorized|forbidden|killed|segmentation fault)\b|失败|错误|异常|拒绝|超时|无法|崩溃|不存在",
+            true,
+            1,
+        ),
+        rule(r"\b(warn(ing)?s?|deprecated|caution|retry(ing)?)\b|警告|注意|重试", true, 3),
+        rule(r"\b(ok|success(ful(ly)?)?|succeeded|passed|done|completed?)\b|成功|完成|通过", true, 2),
+        // 日志级别区分大小写，免得正文里的 info / debug 也被染色；ERROR、WARN 已被上面两条覆盖
+        rule(r"\b(INFO|NOTICE)\b", false, 2),
+        rule(r"\b(DEBUG|TRACE|VERBOSE)\b", false, 4),
+        rule(r"\b[0-9]{1,3}(\.[0-9]{1,3}){3}(/[0-9]{1,2}|:[0-9]{1,5})?\b", false, 6),
+        // IPv6 只认完整 8 段或带 :: 的缩写，免得 12:34:56 这类时间被当成地址；:: 两侧至少一侧有段，免得 std::io 被染色
+        rule(
+            r"(\b[0-9a-f]{1,4}(:[0-9a-f]{1,4}){7}\b|\b[0-9a-f]{1,4}(:[0-9a-f]{1,4}){0,6}::([0-9a-f]{1,4}(:[0-9a-f]{1,4}){0,6}\b)?|::[0-9a-f]{1,4}(:[0-9a-f]{1,4}){0,6}\b)(/[0-9]{1,3})?",
+            true,
+            6,
+        ),
+        rule(r"\b[0-9a-f]{2}([:-][0-9a-f]{2}){5}\b", true, 6),
+        rule(r"\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b", true, 12),
+        rule(
+            r"\b[0-9]{4}[-/][0-9]{2}[-/][0-9]{2}([T ][0-9]{2}:[0-9]{2}(:[0-9]{2}([.,][0-9]+)?)?)?\b|\b[0-9]{2}:[0-9]{2}:[0-9]{2}([.,][0-9]+)?\b",
+            false,
+            5,
+        ),
+        rule(r"\b(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\b", false, 13),
     ]
 }
 

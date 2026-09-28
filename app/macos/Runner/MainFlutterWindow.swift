@@ -3,10 +3,18 @@ import Cocoa
 import FlutterMacOS
 
 /// 把标签栏画进标题栏：隐藏标题、透明标题栏、内容铺满整个窗口。
-/// 标题栏区域被 Flutter 视图盖住后收不到拖动，由 Dart 在空白处按下时调 startDrag。
+/// 标题栏那一条的拖动默认被窗口服务器接管（标签页在这里拖不动），所以关掉 isMovable，
+/// 由 Dart 在空白处按下时调 startDrag，临时打开 isMovable 交给系统拖动。
 class MainFlutterWindow: NSWindow, NSWindowDelegate {
   private var channel: FlutterMethodChannel?
   private var allowClose = false
+  /// Dart 在拖动越过阈值后才调 startDrag，系统拖动要拿最初的 mouseDown 才能让窗口跟住鼠标
+  private var lastMouseDown: NSEvent?
+
+  override func sendEvent(_ event: NSEvent) {
+    if event.type == .leftMouseDown { lastMouseDown = event }
+    super.sendEvent(event)
+  }
 
   override func awakeFromNib() {
     let flutterViewController = FlutterViewController()
@@ -21,6 +29,11 @@ class MainFlutterWindow: NSWindow, NSWindowDelegate {
     titleVisibility = .hidden
     titlebarAppearsTransparent = true
     styleMask.insert(.fullSizeContentView)
+    isMovable = false
+    // 不可移动的窗口在显示器拔掉 / 重排时系统不会帮忙挪回来，窗口完全落在屏幕外时自己居中
+    NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main) { [weak self] _ in
+      if let self = self, self.screen == nil { self.center() }
+    }
     isOpaque = false
     backgroundColor = .clear
     contentMinSize = NSSize(width: 480, height: 320)
@@ -34,7 +47,16 @@ class MainFlutterWindow: NSWindow, NSWindowDelegate {
       guard let self = self else { return }
       switch call.method {
       case "startDrag":
-        if let event = NSApp.currentEvent { self.performDrag(with: event) }
+        if let event = self.lastMouseDown {
+          self.isMovable = true
+          self.performDrag(with: event)
+          // 系统拖动期间不一定回送 mouseUp，按键松开后再关回去
+          Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] timer in
+            if NSEvent.pressedMouseButtons & 1 != 0 { return }
+            self?.isMovable = false
+            timer.invalidate()
+          }
+        }
         result(nil)
       case "zoom":
         // 与系统设置“双击标题栏”行为一致

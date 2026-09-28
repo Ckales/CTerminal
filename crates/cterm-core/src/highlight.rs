@@ -152,4 +152,28 @@ mod tests {
         assert_eq!(pattern_error("("), "unclosed group");
         assert_eq!(pattern_error("ok"), "");
     }
+
+    #[test]
+    fn default_rules_match_expected_text() {
+        let rules = crate::config::Config::default().highlight_rules;
+        let highlights = compile(&rules);
+        assert_eq!(highlights.len(), rules.len(), "默认规则都要能编译");
+        let hits = |text: &str| {
+            let mut hits = Vec::new();
+            for highlight in &highlights {
+                for matched in highlight.regex.find_iter(text) {
+                    hits.push(matched.as_str().to_string());
+                }
+            }
+            hits
+        };
+
+        for expected in ["fe80::1", "::1", "2001:db8::8a2e:370:7334", "fe80::1c2:3aff:fe4b:5d6e/64", "192.0.2.10/24", "00:1a:2b:3c:4d:5e"] {
+            assert!(hits(expected).contains(&expected.to_string()), "{expected}");
+        }
+        assert_eq!(hits("12:34:56"), ["12:34:56"], "时间不能被当成 IPv6");
+        assert_eq!(hits("2026-09-28T21:41:47.123"), ["2026-09-28T21:41:47.123"]);
+        assert_eq!(hits("login failed: 连接超时"), ["failed", "超时"]);
+        assert!(hits("std::io::Result Vec::new password information").is_empty());
+    }
 }

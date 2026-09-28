@@ -172,6 +172,9 @@ const _english = <String, String>{
   '编辑配色方案': 'Edit color scheme',
   '关键字高亮': 'Keyword highlighting',
   '添加规则': 'Add rule',
+  '恢复默认规则': 'Restore defaults',
+  '恢复默认规则？': 'Restore default rules?',
+  '当前的高亮规则会被替换为默认规则，自己添加或修改过的规则会丢失。': 'Current highlight rules will be replaced by the defaults. Rules you added or edited will be lost.',
   '按正则给程序没有上色的文字换颜色，颜色取自当前配色方案。靠前的规则优先；vim 等全屏程序里不生效。':
       'Recolors text the program left uncolored, matched by regex. Colors come from the current color scheme. Earlier rules win; not applied in full-screen apps such as vim.',
   '不改': 'Unchanged',

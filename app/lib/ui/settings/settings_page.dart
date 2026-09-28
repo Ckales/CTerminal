@@ -110,7 +110,7 @@ class _NavItem extends StatelessWidget {
         child: Row(children: [
           Icon(icon, size: 16, color: selected ? colors.text : colors.textDim),
           const SizedBox(width: 10),
-          Text(tr(name), style: TextStyle(fontSize: 13, color: selected ? colors.text : colors.textDim)),
+          Flexible(child: Text(tr(name), overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 13, color: selected ? colors.text : colors.textDim))),
         ]),
       ),
     );

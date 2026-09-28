@@ -8,12 +8,14 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:cterminal/app_state.dart';
+import 'package:cterminal/i18n.dart';
 import 'package:cterminal/src/rust/api/settings.dart' as rust;
 import 'package:cterminal/src/rust/api/terminal.dart';
 import 'package:cterminal/src/rust/frb_generated.dart';
 import 'package:cterminal/terminal/terminal_session.dart';
 import 'package:cterminal/ui/app_shell.dart';
 import 'package:cterminal/window_control.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
@@ -185,6 +187,30 @@ void main() {
       app.dispose();
     });
 
+    testWidgets('鼠标拖动标签页调整顺序', (tester) async {
+      final app = await boot(tester);
+      await press(tester, LogicalKeyboardKey.keyT, meta: true);
+      await waitFor(tester, () => app.tabs.length == 2, what: '⌘T 新建标签页');
+      final first = app.tabs[0];
+      final second = app.tabs[1];
+
+      final start = tester.getCenter(find.text('1'));
+      final gesture = await tester.createGesture(kind: PointerDeviceKind.mouse);
+      await gesture.addPointer(location: start);
+      await gesture.down(start);
+      await tester.pump(const Duration(milliseconds: 50));
+      for (var i = 0; i < 20; i++) {
+        await gesture.moveBy(const Offset(15, 0));
+        await tester.pump(const Duration(milliseconds: 16));
+      }
+      await gesture.up();
+      await tester.pumpAndSettle();
+      expect(app.tabs, [second, first]);
+
+      await tester.pumpWidget(const SizedBox());
+      app.dispose();
+    });
+
     testWidgets('拖放文件：路径转义后粘贴到落点窗格', (tester) async {
       final app = await boot(tester);
       final session = app.activeSession!;
@@ -306,6 +332,34 @@ void main() {
       expect(app.inputTargets(), [other]);
 
       tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(SystemChannels.platform, null);
+      await tester.pumpWidget(const SizedBox());
+      app.dispose();
+    });
+
+    testWidgets('高亮设置页：确认后恢复默认规则', (tester) async {
+      final app = await boot(tester);
+      await tester.runAsync(() => app.updateConfig((config) => config['highlightRules'] = [
+            {'pattern': 'mine', 'ignoreCase': false, 'foreground': 1, 'background': null, 'bold': false, 'enabled': true},
+          ]));
+      // 规则行控件多，测试字体比真实字体宽，窗口放宽一些
+      await tester.binding.setSurfaceSize(const Size(1400, 640));
+      app.openSettings('highlight');
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text(tr('恢复默认规则')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text(tr('取消')));
+      await tester.pumpAndSettle();
+      expect(app.config['highlightRules'], hasLength(1), reason: '取消时不改规则');
+
+      await tester.tap(find.text(tr('恢复默认规则')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text(tr('恢复')));
+      await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 100)));
+      await tester.pumpAndSettle();
+      final defaults = jsonDecode(rust.configDefaults()) as Map<String, dynamic>;
+      expect(app.config['highlightRules'], defaults['highlightRules']);
+
       await tester.pumpWidget(const SizedBox());
       app.dispose();
     });

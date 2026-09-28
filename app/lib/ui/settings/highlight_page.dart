@@ -1,8 +1,11 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 
 import '../../app_state.dart';
 import '../../src/rust/api/settings.dart' as rust;
 import '../../theme.dart';
+import '../selector.dart';
 import 'widgets.dart';
 import '../../i18n.dart';
 
@@ -30,6 +33,16 @@ class HighlightPage extends StatelessWidget {
       Row(children: [
         Text(tr('关键字高亮'), style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: colors.text)),
         const Spacer(),
+        OutlinedButton(
+          onPressed: () async {
+            final ok = await showConfirm(context, title: '恢复默认规则？', message: tr('当前的高亮规则会被替换为默认规则，自己添加或修改过的规则会丢失。'), danger: true, confirm: '恢复');
+            if (!ok) return;
+            final defaults = jsonDecode(rust.configDefaults()) as Map<String, dynamic>;
+            app.updateConfig((config) => config['highlightRules'] = defaults['highlightRules']);
+          },
+          child: Text(tr('恢复默认规则')),
+        ),
+        const SizedBox(width: 8),
         OutlinedButton.icon(
           onPressed: () => edit((rules) => rules.add({'pattern': '', 'ignoreCase': true, 'foreground': 1, 'background': null, 'bold': false, 'enabled': true})),
           icon: const Icon(Icons.add, size: 16),
