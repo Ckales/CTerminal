@@ -143,11 +143,13 @@ class ConfigDropdown extends StatelessWidget {
 
 /// 下拉选择：外观同输入框，展开后是与右键菜单同款的紧凑列表，宽度跟随父级 SizedBox
 class ChoiceDropdown extends StatelessWidget {
-  const ChoiceDropdown({super.key, required this.value, required this.options, required this.onChanged});
+  const ChoiceDropdown({super.key, required this.value, required this.options, required this.onChanged, this.height = 30});
 
   final String value;
   final Map<String, String> options;
   final ValueChanged<String> onChanged;
+  /// 与同一处的输入框等高；设置页是 30，配置编辑弹窗更高一些
+  final double height;
 
   @override
   Widget build(BuildContext context) {
@@ -181,7 +183,7 @@ class ChoiceDropdown extends StatelessWidget {
             ),
         ],
         child: Container(
-          height: 30,
+          height: height,
           padding: const EdgeInsets.only(left: 10, right: 6),
           decoration: BoxDecoration(
             color: colors.surfaceRaised,

@@ -16,8 +16,8 @@ fn scheme(name: &str, foreground: &str, background: &str, cursor: &str, colors: 
 pub fn builtin() -> Vec<ColorScheme> {
     vec![
         scheme("CTerminal Default", "#cacaca", "#171717", "#bbbbbb", [
-            "#000000", "#ff615a", "#b1e969", "#ebd99c", "#5da9f6", "#e86aff", "#82fff7", "#dedacf",
-            "#313131", "#f58c80", "#ddf88f", "#eee5b2", "#a5c7ff", "#ddaaff", "#b7fff9", "#ffffff",
+            "#000000", "#cd3131", "#0dbc79", "#e5e510", "#2472c8", "#bc3fbc", "#11a8cd", "#e5e5e5",
+            "#666666", "#ff0000", "#23d18b", "#f5f543", "#3b8eea", "#d75fd7", "#29b8db", "#ffffff",
         ]),
         scheme("Solarized Dark", "#839496", "#002b36", "#93a1a1", [
             "#073642", "#dc322f", "#859900", "#b58900", "#268bd2", "#d33682", "#2aa198", "#eee8d5",

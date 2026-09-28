@@ -108,8 +108,17 @@ std::string Utf8(const wchar_t* wide) {
   return utf8;
 }
 
-// ZMODEM 上传（远端 rz 在等）：系统打开对话框，多选文件；取消返回空列表
-flutter::EncodableList PickFiles(HWND owner) {
+std::wstring Wide(const std::string& utf8) {
+  int size = MultiByteToWideChar(CP_UTF8, 0, utf8.c_str(), -1, nullptr, 0);
+  if (size <= 1) return std::wstring();
+  std::wstring wide(size - 1, L'\0');
+  MultiByteToWideChar(CP_UTF8, 0, utf8.c_str(), -1, wide.data(), size);
+  return wide;
+}
+
+// ZMODEM 上传（远端 rz 在等）、选私钥：系统打开对话框，多选文件；取消返回空列表。
+// directory 非空时从该目录打开，目录不存在则用系统默认位置
+flutter::EncodableList PickFiles(HWND owner, const std::string& directory) {
   flutter::EncodableList paths;
   IFileOpenDialog* dialog = nullptr;
   if (FAILED(CoCreateInstance(CLSID_FileOpenDialog, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&dialog)))) {
@@ -118,6 +127,13 @@ flutter::EncodableList PickFiles(HWND owner) {
   DWORD options = 0;
   dialog->GetOptions(&options);
   dialog->SetOptions(options | FOS_ALLOWMULTISELECT | FOS_FORCEFILESYSTEM | FOS_FILEMUSTEXIST);
+  if (!directory.empty()) {
+    IShellItem* folder = nullptr;
+    if (SUCCEEDED(SHCreateItemFromParsingName(Wide(directory).c_str(), nullptr, IID_PPV_ARGS(&folder)))) {
+      dialog->SetFolder(folder);
+      folder->Release();
+    }
+  }
   IShellItemArray* items = nullptr;
   if (SUCCEEDED(dialog->Show(owner)) && SUCCEEDED(dialog->GetResults(&items))) {
     DWORD count = 0;
@@ -136,6 +152,13 @@ flutter::EncodableList PickFiles(HWND owner) {
   }
   dialog->Release();
   return paths;
+}
+
+std::string StringOf(const flutter::EncodableMap& map, const char* name) {
+  auto found = map.find(flutter::EncodableValue(name));
+  if (found == map.end()) return std::string();
+  const std::string* value = std::get_if<std::string>(&found->second);
+  return value == nullptr ? std::string() : *value;
 }
 
 bool FlagOf(const flutter::EncodableMap& map, const char* name) {
@@ -169,7 +192,8 @@ void FlutterWindow::HandleWindowCall(const flutter::MethodCall<flutter::Encodabl
     return;
   }
   if (call.method_name() == "pickFiles") {
-    result->Success(flutter::EncodableValue(PickFiles(GetHandle())));
+    const auto* arguments = std::get_if<flutter::EncodableMap>(call.arguments());
+    result->Success(flutter::EncodableValue(PickFiles(GetHandle(), arguments == nullptr ? std::string() : StringOf(*arguments, "directory"))));
     return;
   }
   if (call.method_name() == "toggleFullScreen") {

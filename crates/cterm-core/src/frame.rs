@@ -43,8 +43,8 @@ impl Default for Palette {
             background: 0x171717,
             cursor: 0xbbbbbb,
             ansi: [
-                0x000000, 0xff615a, 0xb1e969, 0xebd99c, 0x5da9f6, 0xe86aff, 0x82fff7, 0xdedacf,
-                0x313131, 0xf58c80, 0xddf88f, 0xeee5b2, 0xa5c7ff, 0xddaaff, 0xb7fff9, 0xffffff,
+                0x000000, 0xcd3131, 0x0dbc79, 0xe5e510, 0x2472c8, 0xbc3fbc, 0x11a8cd, 0xe5e5e5,
+                0x666666, 0xff0000, 0x23d18b, 0xf5f543, 0x3b8eea, 0xd75fd7, 0x29b8db, 0xffffff,
             ],
         }
     }
@@ -140,6 +140,11 @@ pub struct Frame {
     pub foreground: u32,
     pub background: u32,
     pub cursor_color: u32,
+    /// 历史命令建议（整条，新的在前），没有为空；由 Session 填
+    pub suggestions: Vec<String>,
+    /// 已输入部分的起点列、已输入的字符数：界面据此对齐弹框
+    pub suggestion_col: u16,
+    pub suggestion_prefix: u16,
 }
 
 struct Resolver<'a> {
@@ -323,6 +328,9 @@ pub fn build<T: EventListener>(
         foreground: default_fg,
         background: default_bg,
         cursor_color: resolver.named(NamedColor::Cursor, false),
+        suggestions: Vec::new(),
+        suggestion_col: 0,
+        suggestion_prefix: 0,
     }
 }
 
@@ -349,7 +357,7 @@ mod tests {
     #[test]
     fn indexed_colors_follow_xterm() {
         let palette = Palette::default();
-        assert_eq!(palette.indexed(1), 0xff615a);
+        assert_eq!(palette.indexed(1), 0xcd3131);
         assert_eq!(palette.indexed(16), 0x000000);
         assert_eq!(palette.indexed(196), 0xff0000);
         assert_eq!(palette.indexed(231), 0xffffff);

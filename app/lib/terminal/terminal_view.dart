@@ -430,6 +430,13 @@ class _TerminalViewState extends State<TerminalView> with DeltaTextInputClient {
     }
 
     final mods = currentMods();
+    // → 接受历史命令建议（只在光标位于输入末尾时有建议，不影响行内移动）
+    if (event.logicalKey == LogicalKeyboardKey.arrowRight && mods == 0 && _suggestion(session.frame) != null) {
+      if (termAcceptSuggestion(id: session.id)) {
+        _restartBlink();
+        return KeyEventResult.handled;
+      }
+    }
     final altIsMeta = app.terminal['altIsMeta'] == true || !Platform.isMacOS;
     final special = _specialKeys[event.logicalKey];
     String? key;
@@ -817,6 +824,56 @@ class _TerminalViewState extends State<TerminalView> with DeltaTextInputClient {
     );
   }
 
+  // ---------- 历史命令建议 ----------
+
+  String? _suggestion(TermFrame? frame) {
+    if (frame == null || frame.suggestion.isEmpty || !_focus.hasFocus || _composing.isNotEmpty || _searchOpen) return null;
+    if (frame.displayOffset != 0 || !frame.cursorVisible || session.exited) return null;
+    return frame.suggestion;
+  }
+
+  Widget _suggestionPopup(AppColors colors, TerminalMetrics metrics) {
+    return ListenableBuilder(
+      listenable: session,
+      builder: (context, _) {
+        final frame = session.frame;
+        final command = _suggestion(frame);
+        if (frame == null || command == null) return const SizedBox.shrink();
+        final padding = _padding;
+        final height = metrics.cellHeight + 8;
+        final below = frame.cursorRow + 1 < frame.rows;
+        final top = below ? padding + (frame.cursorRow + 1) * metrics.cellHeight + 2 : padding + frame.cursorRow * metrics.cellHeight - height - 2;
+        final typed = String.fromCharCodes(command.runes.take(frame.suggestionPrefix));
+        final style = metrics.baseStyle();
+        return Positioned(
+          left: padding + frame.suggestionCol * metrics.cellWidth - 6,
+          top: top,
+          child: IgnorePointer(
+            child: Container(
+              height: height,
+              padding: const EdgeInsets.symmetric(horizontal: 6),
+              decoration: BoxDecoration(
+                color: colors.surfaceRaised,
+                border: Border.all(color: colors.border),
+                borderRadius: BorderRadius.circular(4),
+              ),
+              child: Row(mainAxisSize: MainAxisSize.min, children: [
+                Text.rich(
+                  TextSpan(children: [
+                    TextSpan(text: typed, style: style.copyWith(color: colors.text)),
+                    TextSpan(text: command.substring(typed.length), style: style.copyWith(color: colors.textDim)),
+                  ]),
+                ),
+                const SizedBox(width: 10),
+                Text('→', style: TextStyle(fontSize: 11, color: colors.textDim)),
+              ]),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
   // ---------- 滚动条 ----------
 
   Widget _scrollbar(TermFrame frame, double height) {
@@ -910,6 +967,7 @@ class _TerminalViewState extends State<TerminalView> with DeltaTextInputClient {
                   ),
                 ),
                 if (frame != null) _scrollbar(frame, size.height),
+                _suggestionPopup(colors, metrics),
                 if (_bellFlash > 0) Positioned.fill(child: IgnorePointer(child: ColoredBox(color: Colors.white.withValues(alpha: _bellFlash)))),
                 if (session.exited) _exitBar(colors),
                 if (_searchOpen) Positioned(top: 8, right: 16, child: _searchBar(colors)),

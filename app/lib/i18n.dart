@@ -266,7 +266,7 @@ const _english = <String, String>{
   '私钥': 'Private key',
   '键盘交互': 'Keyboard-interactive',
   '私钥文件': 'Private key files',
-  '每行一个路径；留空时自动尝试 ~/.ssh/id_ed25519 等': 'One path per line; tries ~/.ssh/id_ed25519 etc. when empty',
+  '留空时自动尝试 ~/.ssh/id_ed25519 等': 'Tries ~/.ssh/id_ed25519 etc. when empty',
   '已保存在系统钥匙串': 'Saved in the system keychain',
   '不保存时连接时询问；密码只写入系统钥匙串，不进配置文件': 'Asked on connect when not saved. Passwords go to the system keychain only, never into the config file',
   '修改密码': 'Change password',
@@ -277,6 +277,7 @@ const _english = <String, String>{
   '端口转发': 'Port forwarding',
   '本地：把本机端口转发到远端可访问的地址；远程：把服务器端口转发回本机；动态：本机 SOCKS5 代理':
       'Local: forward a local port to an address reachable from the server. Remote: forward a server port back here. Dynamic: local SOCKS5 proxy',
+  '添加私钥': 'Add private key',
   '添加转发': 'Add forward',
   '登录脚本': 'Login scripts',
   '连接后等待出现指定文本再发送命令；等待文本留空则立即发送': 'After connecting, wait for the text and then send the command. Empty text sends immediately',

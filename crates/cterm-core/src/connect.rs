@@ -15,6 +15,7 @@ pub fn term_options(config: &Config) -> TermOptions {
         palette: schemes::palette_for(config),
         highlights: highlight::compile(&config.highlight_rules, config.highlight_permissions),
         bold_is_bright: config.terminal.bold_is_bright,
+        history: Some(crate::history::shared()),
     }
 }
 

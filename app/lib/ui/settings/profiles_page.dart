@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import '../../app_state.dart';
 import '../../src/rust/api/settings.dart' as rust;
 import '../../theme.dart';
+import '../../window_control.dart';
 import '../profile_icons.dart';
 import '../selector.dart';
 import 'widgets.dart';
@@ -87,13 +88,24 @@ class _ProfilesPageState extends State<ProfilesPage> {
       builder: (dialogContext) {
         void close() => Navigator.of(dialogContext).pop();
         final screen = MediaQuery.sizeOf(dialogContext);
+        final theme = Theme.of(dialogContext);
         return Dialog(
+          // 与设置页同底色，输入框的填充色才显得出来
+          backgroundColor: AppTheme.of(dialogContext).surface,
           insetPadding: const EdgeInsets.all(24),
           clipBehavior: Clip.antiAlias,
           child: SizedBox(
-            width: 720,
-            height: screen.height * 0.85,
-            child: ProfileEditor(
+            width: 900,
+            height: min(screen.height * 0.85, 640),
+            child: Theme(
+              // 弹窗里输入框和 34 高的下拉框（ProfileEditor.fieldHeight）对齐。
+              // 桌面平台默认 compact 密度会从输入框高度里扣掉 8，内边距里补回来
+              data: theme.copyWith(
+                inputDecorationTheme: theme.inputDecorationTheme.copyWith(
+                  contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 7 - theme.visualDensity.baseSizeAdjustment.dy / 2),
+                ),
+              ),
+              child: ProfileEditor(
               key: ValueKey(profile['id']),
               profile: profile,
               isNew: isNew,
@@ -107,6 +119,7 @@ class _ProfilesPageState extends State<ProfilesPage> {
                   : () async {
                       if (await _delete(profile)) close();
                     },
+              ),
             ),
           ),
         );
@@ -288,6 +301,9 @@ class ProfileEditor extends StatefulWidget {
   final VoidCallback onCancel;
   final VoidCallback? onDelete;
 
+  /// 下拉框高度，与弹窗里加高的输入框对齐
+  static const fieldHeight = 34.0;
+
   @override
   State<ProfileEditor> createState() => _ProfileEditorState();
 }
@@ -297,6 +313,8 @@ class _ProfileEditorState extends State<ProfileEditor> {
   Map<String, dynamic> get _options => _profile['options'] as Map<String, dynamic>;
   String get _type => _profile['type'] as String;
   bool? _passwordSaved;
+  /// 右栏当前标签页；类型没有这一页时回到第一页
+  String _tab = '';
   List<String> _serialPorts = [];
 
   @override
@@ -343,6 +361,7 @@ class _ProfileEditorState extends State<ProfileEditor> {
       control: SizedBox(
         width: 320,
         child: ChoiceDropdown(
+          height: ProfileEditor.fieldHeight,
           value: source[key]?.toString() ?? '',
           options: options,
           onChanged: (value) {
@@ -360,7 +379,7 @@ class _ProfileEditorState extends State<ProfileEditor> {
         control: CompactSwitch(value: _options[key] == true, onChanged: (value) => _setOption(key, value)),
       );
 
-  /// 每行一项的列表字段（参数、私钥、环境变量）
+  /// 每行一项的列表字段（参数、环境变量）
   Widget _lines(String label, String key, {String? help, String? hint, bool pairs = false}) {
     final raw = (_options[key] as List?) ?? [];
     final text = pairs ? raw.map((pair) => '${(pair as List)[0]}=${pair[1]}').join('\n') : raw.join('\n');
@@ -387,96 +406,220 @@ class _ProfileEditorState extends State<ProfileEditor> {
     );
   }
 
+  /// 私钥列表：每个文件一行可删除，下方按钮用系统面板添加
+  Widget _privateKeys(AppColors colors) {
+    final keys = List<String>.from((_options['privateKeys'] as List?) ?? []);
+    return Container(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      decoration: BoxDecoration(border: Border(bottom: BorderSide(color: colors.border.withValues(alpha: 0.5)))),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Text(tr('私钥文件'), style: TextStyle(fontSize: 13, color: colors.text)),
+        Text(tr('留空时自动尝试 ~/.ssh/id_ed25519 等'), style: TextStyle(fontSize: 11.5, color: colors.textDim)),
+        const SizedBox(height: 8),
+        for (final path in keys)
+          Container(
+            height: ProfileEditor.fieldHeight,
+            margin: const EdgeInsets.only(bottom: 6),
+            padding: const EdgeInsets.only(left: 10),
+            decoration: BoxDecoration(color: colors.surfaceRaised, border: Border.all(color: colors.border), borderRadius: BorderRadius.circular(4)),
+            child: Row(children: [
+              Icon(Icons.key_outlined, size: 15, color: colors.textDim),
+              const SizedBox(width: 8),
+              Expanded(child: Text(path, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 13, color: colors.text))),
+              IconButton(
+                tooltip: tr('删除'),
+                iconSize: 16,
+                icon: const Icon(Icons.delete_outline),
+                onPressed: () => _setOption('privateKeys', [...keys]..remove(path)),
+              ),
+            ]),
+          ),
+        OutlinedButton.icon(onPressed: _pickPrivateKeys, icon: const Icon(Icons.folder_open_outlined, size: 15), label: Text(tr('添加私钥'))),
+      ]),
+    );
+  }
+
+  /// 用系统文件面板选私钥，从 ~/.ssh 打开；选中的追加到列表，已有的跳过
+  Future<void> _pickPrivateKeys() async {
+    final home = Platform.environment[Platform.isWindows ? 'USERPROFILE' : 'HOME'];
+    final directory = home == null ? '' : '$home${Platform.pathSeparator}.ssh';
+    final picked = await WindowControl.pickFiles(directory: directory);
+    if (picked.isEmpty || !mounted) return;
+    final keys = List<String>.from((_options['privateKeys'] as List?) ?? []);
+    for (final path in picked) {
+      if (!keys.contains(path)) keys.add(path);
+    }
+    _setOption('privateKeys', keys);
+  }
+
+  /// 左栏的一项：标签在上、控件在下
+  Widget _stacked(AppColors colors, String label, Widget control, {String? help}) => Padding(
+        padding: const EdgeInsets.only(bottom: 14),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text(tr(label), style: TextStyle(fontSize: 12.5, color: colors.text)),
+          if (help != null) Text(tr(help), style: TextStyle(fontSize: 11.5, color: colors.textDim)),
+          const SizedBox(height: 6),
+          control,
+        ]),
+      );
+
+  /// 标签页顶部的一行说明
+  Widget _description(AppColors colors, String text) => Padding(
+        padding: const EdgeInsets.only(bottom: 8),
+        child: Text(tr(text), style: TextStyle(fontSize: 12, color: colors.textDim)),
+      );
+
+  /// 左栏：各类型通用的名称、分组、外观
+  List<Widget> _generalFields(AppState app, AppColors colors) {
+    final groups = {'': '未分组', for (final group in (app.config['groups'] as List)) (group as Map)['id'] as String: group['name'] as String};
+    return [
+      _stacked(colors, '名称', CommitTextField(width: null, value: _profile['name'] as String? ?? '', onCommit: (value) => _set('name', value))),
+      _stacked(colors, '分组', SizedBox(width: double.infinity, child: ChoiceDropdown(height: ProfileEditor.fieldHeight, value: _profile['group'] as String? ?? '', options: groups, onChanged: (value) => _set('group', value)))),
+      _stacked(
+        colors,
+        '图标',
+        Wrap(spacing: 4, runSpacing: 4, children: [
+          for (final entry in {'': profileIcon({'type': _type}), ...profileIconChoices}.entries)
+            InkWell(
+              onTap: () => _set('icon', entry.key),
+              child: Container(
+                padding: const EdgeInsets.all(4),
+                decoration: BoxDecoration(
+                  border: Border.all(color: _profile['icon'] == entry.key ? colors.accent : Colors.transparent),
+                  borderRadius: BorderRadius.circular(4),
+                ),
+                child: Icon(entry.value, size: 16, color: colors.textDim),
+              ),
+            ),
+        ]),
+      ),
+      _stacked(
+        colors,
+        '颜色',
+        help: '标签页顶部的彩标',
+        Wrap(spacing: 6, runSpacing: 6, children: [
+          for (final color in ['', ...tabColors])
+            GestureDetector(
+              onTap: () => _set('color', color),
+              child: Container(
+                width: 18,
+                height: 18,
+                decoration: BoxDecoration(
+                  color: parseHexColor(color),
+                  shape: BoxShape.circle,
+                  border: Border.all(color: _profile['color'] == color ? colors.text : colors.border, width: 1.5),
+                ),
+                child: color.isEmpty ? Icon(Icons.block, size: 12, color: colors.textDim) : null,
+              ),
+            ),
+        ]),
+      ),
+      _stacked(
+        colors,
+        '会话结束时',
+        SizedBox(
+          width: double.infinity,
+          child: ChoiceDropdown(
+            height: ProfileEditor.fieldHeight,
+            value: _profile['behaviorOnSessionEnd'] as String? ?? 'auto',
+            options: const {'auto': '正常退出时关闭，出错时保留', 'keep': '保留标签页', 'reconnect': '自动重新连接', 'close': '关闭标签页'},
+            onChanged: (value) => _set('behaviorOnSessionEnd', value),
+          ),
+        ),
+      ),
+      Row(children: [
+        Expanded(
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text(tr('禁用动态标题'), style: TextStyle(fontSize: 12.5, color: colors.text)),
+            Text(tr('标签页始终显示配置名，不跟随程序设置的标题'), style: TextStyle(fontSize: 11.5, color: colors.textDim)),
+          ]),
+        ),
+        const SizedBox(width: 8),
+        CompactSwitch(value: _profile['disableDynamicTitle'] == true, onChanged: (value) => _set('disableDynamicTitle', value)),
+      ]),
+    ];
+  }
+
   @override
   Widget build(BuildContext context) {
     final app = AppScope.of(context);
     final colors = AppTheme.of(context);
-    final groups = {'': '未分组', for (final group in (app.config['groups'] as List)) (group as Map)['id'] as String: group['name'] as String};
     final typeNames = {'local': '本地终端', 'ssh': 'SSH', 'telnet': 'Telnet', 'serial': '串口'};
+    final tabs = switch (_type) {
+      'ssh' => _sshTabs(app, colors),
+      'telnet' => {
+          '连接': [_text('主机', 'host'), _text('端口', 'port', number: true, width: 100)],
+        },
+      'serial' => {'串口': _serialRows()},
+      _ => {
+          '命令': [
+            _text('程序', 'command', hint: '/bin/zsh', help: '可执行文件的完整路径'),
+            _lines('参数', 'args', help: '每行一个', hint: '-l'),
+            _text('工作目录', 'cwd', hint: '留空 = 用户主目录'),
+            _lines('环境变量', 'env', help: '每行一个 KEY=VALUE', pairs: true),
+          ],
+        },
+    };
+    final current = tabs.containsKey(_tab) ? _tab : tabs.keys.first;
+    Widget line() => Container(height: 1, color: colors.border);
 
-    return ListView(padding: const EdgeInsets.fromLTRB(24, 16, 24, 24), children: [
-      Row(children: [
-        Text(widget.isNew ? tr('新建{type}配置', {'type': tr(typeNames[_type]!)}) : tr('编辑配置'), style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: colors.text)),
-        const Spacer(),
-        if (widget.onDelete != null)
-          TextButton(onPressed: widget.onDelete, child: Text(tr('删除'), style: TextStyle(color: colors.danger))),
-        const SizedBox(width: 8),
-        OutlinedButton(onPressed: widget.onCancel, child: Text(tr('取消'))),
-        const SizedBox(width: 8),
-        FilledButton(onPressed: () => widget.onSave(_profile), child: Text(tr('保存'))),
-      ]),
-      const SizedBox(height: 16),
-      SettingsSection(title: '常规', children: [
-        _text('名称', 'name', option: false),
-        _dropdown('分组', 'group', groups, option: false),
-        SettingRow(
-          label: '图标',
-          control: Wrap(spacing: 4, children: [
-            for (final entry in {'': profileIcon({'type': _type}), ...profileIconChoices}.entries)
-              InkWell(
-                onTap: () => _set('icon', entry.key),
-                child: Container(
-                  padding: const EdgeInsets.all(4),
-                  decoration: BoxDecoration(
-                    border: Border.all(color: _profile['icon'] == entry.key ? colors.accent : Colors.transparent),
-                    borderRadius: BorderRadius.circular(4),
-                  ),
-                  child: Icon(entry.value, size: 16, color: colors.textDim),
+    return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+      Padding(
+        padding: const EdgeInsets.fromLTRB(20, 16, 20, 12),
+        child: Text(widget.isNew ? tr('新建{type}配置', {'type': tr(typeNames[_type]!)}) : tr('编辑配置'), style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: colors.text)),
+      ),
+      line(),
+      Expanded(
+        child: Row(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+          SizedBox(width: 260, child: ListView(padding: const EdgeInsets.all(20), children: _generalFields(app, colors))),
+          Container(width: 1, color: colors.border),
+          Expanded(
+            child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 8, 20, 0),
+                // 英文或窄窗口时标签可能排不下，允许横向滚动
+                child: SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: Row(children: [
+                  for (final name in tabs.keys)
+                    // 不用 InkWell：它的悬停、点击底色在细长的标签上很突兀
+                    MouseRegion(
+                      cursor: SystemMouseCursors.click,
+                      child: GestureDetector(
+                        onTap: () => setState(() => _tab = name),
+                        child: Container(
+                        margin: const EdgeInsets.only(right: 20),
+                        padding: const EdgeInsets.symmetric(vertical: 8),
+                        decoration: BoxDecoration(border: Border(bottom: BorderSide(color: name == current ? colors.accent : Colors.transparent, width: 2))),
+                        child: Text(tr(name), style: TextStyle(fontSize: 13, fontWeight: name == current ? FontWeight.w600 : null, color: name == current ? colors.text : colors.textDim)),
+                        ),
+                      ),
+                    ),
+                  ]),
                 ),
               ),
-          ]),
-        ),
-        SettingRow(
-          label: '颜色',
-          help: '标签页顶部的彩标',
-          control: Wrap(spacing: 6, children: [
-            for (final color in ['', ...tabColors])
-              GestureDetector(
-                onTap: () => _set('color', color),
-                child: Container(
-                  width: 18,
-                  height: 18,
-                  decoration: BoxDecoration(
-                    color: parseHexColor(color),
-                    shape: BoxShape.circle,
-                    border: Border.all(color: _profile['color'] == color ? colors.text : colors.border, width: 1.5),
-                  ),
-                  child: color.isEmpty ? Icon(Icons.block, size: 12, color: colors.textDim) : null,
-                ),
-              ),
-          ]),
-        ),
-        _dropdown('会话结束时', 'behaviorOnSessionEnd', {
-          'auto': '正常退出时关闭，出错时保留',
-          'keep': '保留标签页',
-          'reconnect': '自动重新连接',
-          'close': '关闭标签页',
-        }, option: false),
-        SettingRow(
-          label: '禁用动态标题',
-          help: '标签页始终显示配置名，不跟随程序设置的标题',
-          control: CompactSwitch(value: _profile['disableDynamicTitle'] == true, onChanged: (value) => _set('disableDynamicTitle', value)),
-        ),
-      ]),
-      ...switch (_type) {
-        'ssh' => _sshSections(app, colors),
-        'telnet' => [
-            SettingsSection(title: '连接', children: [_text('主机', 'host'), _text('端口', 'port', number: true, width: 100)]),
-          ],
-        'serial' => _serialSections(),
-        _ => [
-            SettingsSection(title: '命令', children: [
-              _text('程序', 'command', hint: '/bin/zsh', help: '可执行文件的完整路径'),
-              _lines('参数', 'args', help: '每行一个', hint: '-l'),
-              _text('工作目录', 'cwd', hint: '留空 = 用户主目录'),
-              _lines('环境变量', 'env', help: '每行一个 KEY=VALUE', pairs: true),
+              line(),
+              Expanded(child: ListView(key: ValueKey(current), padding: const EdgeInsets.fromLTRB(20, 12, 20, 20), children: tabs[current]!)),
             ]),
-          ],
-      },
+          ),
+        ]),
+      ),
+      line(),
+      Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+        child: Row(children: [
+          if (widget.onDelete != null) TextButton(onPressed: widget.onDelete, child: Text(tr('删除'), style: TextStyle(color: colors.danger))),
+          const Spacer(),
+          OutlinedButton(onPressed: widget.onCancel, child: Text(tr('取消'))),
+          const SizedBox(width: 8),
+          FilledButton(onPressed: () => widget.onSave(_profile), child: Text(tr('保存'))),
+        ]),
+      ),
     ]);
   }
 
-  List<Widget> _sshSections(AppState app, AppColors colors) {
+  /// SSH 右栏各标签页的内容，顺序即标签顺序
+  Map<String, List<Widget>> _sshTabs(AppState app, AppColors colors) {
     final jumpHosts = {
       '': '不使用',
       for (final profile in app.profiles)
@@ -485,15 +628,15 @@ class _ProfileEditorState extends State<ProfileEditor> {
     final forwards = List<Map<String, dynamic>>.from(((_options['forwardedPorts'] as List?) ?? []).map((item) => Map<String, dynamic>.from(item as Map)));
     final scripts = List<Map<String, dynamic>>.from(((_options['loginScripts'] as List?) ?? []).map((item) => Map<String, dynamic>.from(item as Map)));
 
-    return [
-      SettingsSection(title: '连接', children: [
+    return {
+      '连接': [
         _text('主机', 'host', hint: 'example.com'),
         _text('端口', 'port', number: true, width: 100),
         _text('用户名', 'user', hint: '留空则连接时询问'),
         _dropdown('跳板机', 'jumpHost', jumpHosts),
         _text('代理命令', 'proxyCommand', hint: 'ssh -W %h:%p bastion.example.com', help: 'ProxyCommand：经由此命令的输入输出连接，%h 主机、%p 端口、%r 用户；设置了跳板机时以跳板机为准'),
-      ]),
-      SettingsSection(title: '认证', children: [
+      ],
+      '认证': [
         _dropdown('方式', 'auth', {
           'auto': '自动（agent → 私钥 → 键盘交互 → 密码）',
           'password': '密码',
@@ -501,7 +644,7 @@ class _ProfileEditorState extends State<ProfileEditor> {
           'agent': 'ssh-agent',
           'keyboardInteractive': '键盘交互',
         }),
-        _lines('私钥文件', 'privateKeys', help: '每行一个路径；留空时自动尝试 ~/.ssh/id_ed25519 等', hint: '~/.ssh/id_ed25519'),
+        _privateKeys(colors),
         SettingRow(
           label: '密码',
           help: _passwordSaved == true ? '已保存在系统钥匙串' : '不保存时连接时询问；密码只写入系统钥匙串，不进配置文件',
@@ -528,8 +671,9 @@ class _ProfileEditorState extends State<ProfileEditor> {
           ]),
         ),
         _switch('转发 ssh-agent', 'agentForward', help: '只对信任的服务器开启'),
-      ]),
-      SettingsSection(title: '端口转发', description: '本地：把本机端口转发到远端可访问的地址；远程：把服务器端口转发回本机；动态：本机 SOCKS5 代理', children: [
+      ],
+      '端口转发': [
+        _description(colors, '本地：把本机端口转发到远端可访问的地址；远程：把服务器端口转发回本机；动态：本机 SOCKS5 代理'),
         for (var index = 0; index < forwards.length; index++) _forwardRow(forwards, index, colors),
         Align(
           alignment: Alignment.centerLeft,
@@ -542,8 +686,9 @@ class _ProfileEditorState extends State<ProfileEditor> {
             label: Text(tr('添加转发')),
           ),
         ),
-      ]),
-      SettingsSection(title: '登录脚本', description: '连接后等待出现指定文本再发送命令；等待文本留空则立即发送', children: [
+      ],
+      '登录脚本': [
+        _description(colors, '连接后等待出现指定文本再发送命令；等待文本留空则立即发送'),
         for (var index = 0; index < scripts.length; index++)
           Padding(
             padding: const EdgeInsets.only(bottom: 6),
@@ -592,13 +737,13 @@ class _ProfileEditorState extends State<ProfileEditor> {
             label: Text(tr('添加一步')),
           ),
         ),
-      ]),
-      SettingsSection(title: '高级', children: [
+      ],
+      '高级': [
         _text('保活间隔（秒）', 'keepaliveInterval', number: true, width: 100, help: '0 = 不发送'),
         _text('保活失败次数上限', 'keepaliveCountMax', number: true, width: 100),
         _text('连接超时（秒）', 'readyTimeout', number: true, width: 100),
-      ]),
-    ];
+      ],
+    };
   }
 
   Widget _forwardRow(List<Map<String, dynamic>> forwards, int index, AppColors colors) {
@@ -614,7 +759,7 @@ class _ProfileEditorState extends State<ProfileEditor> {
       child: Row(children: [
         SizedBox(
           width: 100,
-          child: ChoiceDropdown(value: forward['type'] as String? ?? 'local', options: const {'local': '本地', 'remote': '远程', 'dynamic': '动态'}, onChanged: (value) => update('type', value)),
+          child: ChoiceDropdown(height: ProfileEditor.fieldHeight, value: forward['type'] as String? ?? 'local', options: const {'local': '本地', 'remote': '远程', 'dynamic': '动态'}, onChanged: (value) => update('type', value)),
         ),
         const SizedBox(width: 6),
         CommitTextField(width: 120, hint: '监听地址', value: forward['host'] as String? ?? '', onCommit: (value) => update('host', value)),
@@ -638,10 +783,9 @@ class _ProfileEditorState extends State<ProfileEditor> {
     );
   }
 
-  List<Widget> _serialSections() {
+  List<Widget> _serialRows() {
     final ports = {for (final port in _serialPorts) port: port};
     return [
-      SettingsSection(title: '串口', children: [
         if (ports.isEmpty) _text('端口', 'port', hint: Platform.isWindows ? 'COM3' : '/dev/cu.usbserial-0001') else _dropdown('端口', 'port', ports),
         _dropdown('波特率', 'baudrate', {for (final rate in [9600, 19200, 38400, 57600, 115200, 230400, 460800, 921600]) '$rate': '$rate'}, numeric: true),
         _dropdown('数据位', 'databits', const {'5': '5', '6': '6', '7': '7', '8': '8'}, numeric: true),
@@ -650,7 +794,6 @@ class _ProfileEditorState extends State<ProfileEditor> {
         _dropdown('流控', 'flowcontrol', const {'none': '无', 'software': '软件 (XON/XOFF)', 'hardware': '硬件 (RTS/CTS)'}),
         _dropdown('回车发送', 'outputNewlines', const {'cr': 'CR', 'lf': 'LF', 'crlf': 'CRLF'}),
         _switch('本地回显', 'localEcho'),
-      ]),
     ];
   }
 

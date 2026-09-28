@@ -15,12 +15,14 @@ pub use alacritty_terminal::grid::Scroll;
 use alacritty_terminal::index::{Boundary, Column, Direction, Line, Point, Side};
 use alacritty_terminal::selection::{Selection, SelectionType};
 use alacritty_terminal::sync::FairMutex;
+use alacritty_terminal::term::cell::Flags;
 use alacritty_terminal::term::search::{Match, RegexSearch};
 use alacritty_terminal::term::{self, Term, TermMode};
 use alacritty_terminal::vte::ansi::{CursorShape, CursorStyle, Processor};
 
 use crate::frame::{self, Frame, Palette};
 use crate::highlight::Highlight;
+use crate::history::History;
 use crate::input::{self, KeyInput, MouseInput};
 use crate::zmodem;
 
@@ -95,6 +97,8 @@ pub struct TermOptions {
     pub palette: Palette,
     pub highlights: Vec<Highlight>,
     pub bold_is_bright: bool,
+    /// None = 不记命令历史、不给建议
+    pub history: Option<Arc<Mutex<History>>>,
 }
 
 type SharedTransport = Arc<Mutex<Option<Box<dyn Transport>>>>;
@@ -156,6 +160,9 @@ pub struct Session {
     zmodem_active: AtomicBool,
     zmodem_control: Sender<zmodem::Control>,
     downloads_dir: Mutex<PathBuf>,
+    history: Option<Arc<Mutex<History>>>,
+    /// 本条命令的起点（第一次按键时的光标）：(行号 + 回看行数, 列)，回看增长时仍指向同一行
+    anchor: Mutex<Option<(i32, usize)>>,
 }
 
 impl Session {
@@ -198,6 +205,8 @@ impl Session {
             zmodem_active: AtomicBool::new(false),
             zmodem_control: control_tx,
             downloads_dir: Mutex::new(crate::paths::downloads_dir()),
+            history: options.history,
+            anchor: Mutex::new(None),
         });
 
         let (tx, rx) = mpsc::channel();
@@ -380,7 +389,13 @@ impl Session {
         let term = self.term.lock();
         let palette = self.palette.lock().unwrap();
         let highlights = self.highlights.lock().unwrap();
-        frame::build(&term, &palette, &highlights, current_match.as_ref(), self.bold_is_bright)
+        let mut frame = frame::build(&term, &palette, &highlights, current_match.as_ref(), self.bold_is_bright);
+        if let Some((commands, prefix, col)) = self.suggestions(&term) {
+            frame.suggestions = commands;
+            frame.suggestion_col = col;
+            frame.suggestion_prefix = prefix.chars().count() as u16;
+        }
+        frame
     }
 
     pub fn write(&self, data: &[u8]) {
@@ -415,7 +430,83 @@ impl Session {
         if self.scroll_on_input {
             self.scroll_to_bottom_if_needed();
         }
+        self.track_command(data);
         self.write(data);
+    }
+
+    /// 第一次按键记下命令起点；回车时把起点到行尾的文字记进历史。
+    /// 在字节发出之前读屏：回车前的字符早已回显，回车本身还没被 shell 处理。
+    // ponytail: 回看满了之后起点行号会随滚屏漂移（只在命令长到折行、且位于最底行时发生），要精确需 OSC 133 shell 集成
+    fn track_command(&self, data: &[u8]) {
+        let Some(history) = &self.history else { return };
+        let term = self.term.lock();
+        let mut anchor = self.anchor.lock().unwrap();
+        if term.mode().contains(TermMode::ALT_SCREEN) {
+            *anchor = None;
+            return;
+        }
+        let cursor = term.grid().cursor.point;
+        let history_size = term.history_size() as i32;
+        let start = *anchor.get_or_insert((cursor.line.0 + history_size, cursor.column.0));
+        let enter = data == b"\r" || data == b"\r\n";
+        if enter {
+            if let Some(start) = anchor_point(&term, start) {
+                let end = term.line_search_right(cursor);
+                history.lock().unwrap().add(&term.bounds_to_string(start, end));
+            }
+        }
+        // 回车、Ctrl-C / Ctrl-D / Ctrl-L 之后是新的一行；带换行的粘贴还没回显，读不到，不记
+        if enter || data.contains(&b'\r') || data.contains(&b'\n') || data == [0x03] || data == [0x04] || data == [0x0c] {
+            *anchor = None;
+        }
+    }
+
+    /// 光标在已输入内容末尾、历史里有以它开头的命令时，返回 (整条命令, 已输入部分, 起点所在列)
+    fn suggestions(&self, term: &Term<Listener>) -> Option<(Vec<String>, String, u16)> {
+        let history = self.history.as_ref()?;
+        if term.mode().contains(TermMode::ALT_SCREEN) {
+            return None;
+        }
+        let start = anchor_point(term, (*self.anchor.lock().unwrap())?)?;
+        let cursor = term.grid().cursor.point;
+        if cursor <= start {
+            return None;
+        }
+        let mut typed = term.bounds_to_string(start, cursor.sub(term, Boundary::None, 1));
+        // 行尾空白不算进文字，光标前输入的空格要补回来（“git ” 应匹配 “git status” 的剩余 “status”）
+        let row = &term.grid()[cursor.line];
+        let mut filled = 0;
+        for col in 0..cursor.column.0 {
+            let cell = &row[Column(col)];
+            if cell.c != ' ' || cell.flags.contains(Flags::WIDE_CHAR_SPACER) {
+                filled = col + 1;
+            }
+        }
+        typed.extend(std::iter::repeat_n(' ', cursor.column.0 - filled));
+        let whole = term.bounds_to_string(start, term.line_search_right(cursor));
+        if typed.trim_end() != whole.trim_end() {
+            return None;
+        }
+        let commands = history.lock().unwrap().suggest(&typed, SUGGESTION_LIMIT);
+        if commands.is_empty() {
+            return None;
+        }
+        let col = if start.line == cursor.line { start.column.0 as u16 } else { 0 };
+        Some((commands, typed, col))
+    }
+
+    /// 接受界面选中的那条建议：把还没输入的部分发出去；当前输入已不是它的前缀时返回 false
+    pub fn accept_suggestion(&self, command: &str) -> bool {
+        let rest = {
+            let term = self.term.lock();
+            let Some((commands, typed, _)) = self.suggestions(&term) else { return false };
+            if !commands.iter().any(|candidate| candidate == command) {
+                return false;
+            }
+            command[typed.len()..].to_string()
+        };
+        self.input(rest.as_bytes());
+        true
     }
 
     pub fn paste(&self, text: &str) {
@@ -646,6 +737,17 @@ fn advance(parser: &mut Processor, term: &mut Term<Listener>, detector: &mut zmo
     start
 }
 
+/// 命令起点换算回网格坐标；已滚出回看或被清掉时返回 None
+fn anchor_point<T>(term: &Term<T>, (line, col): (i32, usize)) -> Option<Point> {
+    let line = Line(line - term.history_size() as i32);
+    if line < term.topmost_line() || line > term.bottommost_line() {
+        return None;
+    }
+    Some(Point::new(line, Column(col.min(term.columns() - 1))))
+}
+
+const SUGGESTION_LIMIT: usize = 8;
+
 fn viewport_point<T>(term: &Term<T>, col: u16, row: u16) -> Point {
     let offset = term.grid().display_offset() as i32;
     let line = Line((row as i32).min(term.screen_lines() as i32 - 1) - offset);
@@ -715,6 +817,7 @@ mod tests {
                 palette: Palette::default(),
                 highlights: Vec::new(),
                 bold_is_bright: true,
+                history: Some(Arc::new(Mutex::new(History::default()))),
             };
             let (session, tx) = Session::new(options, SIZE, sink);
             let written = Arc::new(Mutex::new(Vec::new()));
@@ -882,6 +985,43 @@ mod tests {
             }
         }
         assert_eq!(exit.as_deref(), Some("bye"));
+    }
+
+    #[test]
+    fn enter_records_echoed_command_and_prefix_suggests_it() {
+        let harness = Harness::new();
+        let session = &harness.session;
+        // 模拟 shell：用户逐键输入，shell 逐键回显
+        let type_line = |text: &str| {
+            for ch in text.chars() {
+                session.input(ch.to_string().as_bytes());
+                harness.feed(&ch.to_string());
+            }
+        };
+        harness.feed("$ ");
+        type_line("git status");
+        session.input(b"\r");
+        harness.feed("\r\nclean\r\n$ ");
+        // 没回显的密码读不到，不记
+        harness.feed("Password: ");
+        session.input(b"hunter22");
+        session.input(b"\r");
+        harness.feed("\r\n$ ");
+
+        type_line("git");
+        assert_eq!(session.frame().suggestion_prefix, 3);
+        type_line(" ");
+        let frame = session.frame();
+        assert_eq!((frame.suggestion.as_str(), frame.suggestion_col, frame.suggestion_prefix), ("git status", 2, 4));
+        harness.take_written();
+        assert!(session.accept_suggestion());
+        assert_eq!(harness.take_written(), b"status");
+        // Ctrl-C 放弃这一行后没有起点，不再给建议
+        session.input(&[0x03]);
+        harness.feed("^C\r\n$ ");
+        assert_eq!(session.frame().suggestion, "");
+        assert!(!session.accept_suggestion());
+        assert_eq!(session.history.as_ref().unwrap().lock().unwrap().suggest("h"), None);
     }
 
     #[test]

@@ -39,7 +39,7 @@ flutter_rust_bridge::frb_generated_boilerplate!(
     default_rust_auto_opaque = RustAutoOpaqueMoi,
 );
 pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_VERSION: &str = "2.13.0";
-pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = 790256588;
+pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = -314646472;
 
 // Section: executor
 
@@ -936,6 +936,36 @@ fn wire__crate__api__settings__state_save_impl(
                     std::result::Result::Ok(output_ok)
                 })())
             }
+        },
+    )
+}
+fn wire__crate__api__terminal__term_accept_suggestion_impl(
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) -> flutter_rust_bridge::for_generated::WireSyncRust2DartSse {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_sync::<flutter_rust_bridge::for_generated::SseCodec, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "term_accept_suggestion",
+            port: None,
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Sync,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_id = <u32>::sse_decode(&mut deserializer);
+            deserializer.end();
+            transform_result_sse::<_, ()>((move || {
+                let output_ok = Ok::<_, ()>(crate::api::terminal::term_accept_suggestion(api_id))?;
+                std::result::Result::Ok(output_ok)
+            })())
         },
     )
 }
@@ -2002,6 +2032,9 @@ impl SseDecode for crate::api::terminal::TermFrame {
         let mut var_foreground = <u32>::sse_decode(deserializer);
         let mut var_background = <u32>::sse_decode(deserializer);
         let mut var_cursorColor = <u32>::sse_decode(deserializer);
+        let mut var_suggestion = <String>::sse_decode(deserializer);
+        let mut var_suggestionCol = <u16>::sse_decode(deserializer);
+        let mut var_suggestionPrefix = <u16>::sse_decode(deserializer);
         return crate::api::terminal::TermFrame {
             cols: var_cols,
             rows: var_rows,
@@ -2017,6 +2050,9 @@ impl SseDecode for crate::api::terminal::TermFrame {
             foreground: var_foreground,
             background: var_background,
             cursor_color: var_cursorColor,
+            suggestion: var_suggestion,
+            suggestion_col: var_suggestionCol,
+            suggestion_prefix: var_suggestionPrefix,
         };
     }
 }
@@ -2137,9 +2173,9 @@ fn pde_ffi_dispatcher_primary_impl(
         24 => wire__crate__api__sftp__sftp_upload_impl(port, ptr, rust_vec_len, data_len),
         26 => wire__crate__api__settings__state_load_impl(port, ptr, rust_vec_len, data_len),
         27 => wire__crate__api__settings__state_save_impl(port, ptr, rust_vec_len, data_len),
-        37 => wire__crate__api__terminal__term_open_impl(port, ptr, rust_vec_len, data_len),
-        51 => wire__crate__api__update__update_check_daily_impl(port, ptr, rust_vec_len, data_len),
-        52 => wire__crate__api__update__update_check_now_impl(port, ptr, rust_vec_len, data_len),
+        38 => wire__crate__api__terminal__term_open_impl(port, ptr, rust_vec_len, data_len),
+        52 => wire__crate__api__update__update_check_daily_impl(port, ptr, rust_vec_len, data_len),
+        53 => wire__crate__api__update__update_check_now_impl(port, ptr, rust_vec_len, data_len),
         _ => unreachable!(),
     }
 }
@@ -2160,28 +2196,29 @@ fn pde_ffi_dispatcher_sync_impl(
         9 => wire__crate__api__settings__highlight_pattern_error_impl(ptr, rust_vec_len, data_len),
         15 => wire__crate__api__settings__set_language_impl(ptr, rust_vec_len, data_len),
         25 => wire__crate__api__settings__shell_path_impl(ptr, rust_vec_len, data_len),
-        28 => wire__crate__api__terminal__term_apply_settings_impl(ptr, rust_vec_len, data_len),
-        29 => wire__crate__api__terminal__term_clear_impl(ptr, rust_vec_len, data_len),
-        30 => wire__crate__api__terminal__term_close_impl(ptr, rust_vec_len, data_len),
-        31 => wire__crate__api__terminal__term_cwd_impl(ptr, rust_vec_len, data_len),
-        32 => wire__crate__api__terminal__term_frame_impl(ptr, rust_vec_len, data_len),
-        33 => wire__crate__api__terminal__term_input_impl(ptr, rust_vec_len, data_len),
-        34 => wire__crate__api__terminal__term_key_impl(ptr, rust_vec_len, data_len),
-        35 => wire__crate__api__terminal__term_line_text_impl(ptr, rust_vec_len, data_len),
-        36 => wire__crate__api__terminal__term_mouse_impl(ptr, rust_vec_len, data_len),
-        38 => wire__crate__api__terminal__term_paste_impl(ptr, rust_vec_len, data_len),
-        39 => wire__crate__api__terminal__term_resize_impl(ptr, rust_vec_len, data_len),
-        40 => wire__crate__api__terminal__term_scroll_impl(ptr, rust_vec_len, data_len),
-        41 => wire__crate__api__terminal__term_scroll_offset_impl(ptr, rust_vec_len, data_len),
-        42 => wire__crate__api__terminal__term_scroll_to_impl(ptr, rust_vec_len, data_len),
-        43 => wire__crate__api__terminal__term_search_impl(ptr, rust_vec_len, data_len),
-        44 => wire__crate__api__terminal__term_search_clear_impl(ptr, rust_vec_len, data_len),
-        45 => wire__crate__api__terminal__term_select_all_impl(ptr, rust_vec_len, data_len),
-        46 => wire__crate__api__terminal__term_select_clear_impl(ptr, rust_vec_len, data_len),
-        47 => wire__crate__api__terminal__term_select_start_impl(ptr, rust_vec_len, data_len),
-        48 => wire__crate__api__terminal__term_select_update_impl(ptr, rust_vec_len, data_len),
-        49 => wire__crate__api__terminal__term_selection_text_impl(ptr, rust_vec_len, data_len),
-        50 => wire__crate__api__terminal__term_zmodem_upload_impl(ptr, rust_vec_len, data_len),
+        28 => wire__crate__api__terminal__term_accept_suggestion_impl(ptr, rust_vec_len, data_len),
+        29 => wire__crate__api__terminal__term_apply_settings_impl(ptr, rust_vec_len, data_len),
+        30 => wire__crate__api__terminal__term_clear_impl(ptr, rust_vec_len, data_len),
+        31 => wire__crate__api__terminal__term_close_impl(ptr, rust_vec_len, data_len),
+        32 => wire__crate__api__terminal__term_cwd_impl(ptr, rust_vec_len, data_len),
+        33 => wire__crate__api__terminal__term_frame_impl(ptr, rust_vec_len, data_len),
+        34 => wire__crate__api__terminal__term_input_impl(ptr, rust_vec_len, data_len),
+        35 => wire__crate__api__terminal__term_key_impl(ptr, rust_vec_len, data_len),
+        36 => wire__crate__api__terminal__term_line_text_impl(ptr, rust_vec_len, data_len),
+        37 => wire__crate__api__terminal__term_mouse_impl(ptr, rust_vec_len, data_len),
+        39 => wire__crate__api__terminal__term_paste_impl(ptr, rust_vec_len, data_len),
+        40 => wire__crate__api__terminal__term_resize_impl(ptr, rust_vec_len, data_len),
+        41 => wire__crate__api__terminal__term_scroll_impl(ptr, rust_vec_len, data_len),
+        42 => wire__crate__api__terminal__term_scroll_offset_impl(ptr, rust_vec_len, data_len),
+        43 => wire__crate__api__terminal__term_scroll_to_impl(ptr, rust_vec_len, data_len),
+        44 => wire__crate__api__terminal__term_search_impl(ptr, rust_vec_len, data_len),
+        45 => wire__crate__api__terminal__term_search_clear_impl(ptr, rust_vec_len, data_len),
+        46 => wire__crate__api__terminal__term_select_all_impl(ptr, rust_vec_len, data_len),
+        47 => wire__crate__api__terminal__term_select_clear_impl(ptr, rust_vec_len, data_len),
+        48 => wire__crate__api__terminal__term_select_start_impl(ptr, rust_vec_len, data_len),
+        49 => wire__crate__api__terminal__term_select_update_impl(ptr, rust_vec_len, data_len),
+        50 => wire__crate__api__terminal__term_selection_text_impl(ptr, rust_vec_len, data_len),
+        51 => wire__crate__api__terminal__term_zmodem_upload_impl(ptr, rust_vec_len, data_len),
         _ => unreachable!(),
     }
 }
@@ -2275,6 +2312,9 @@ impl flutter_rust_bridge::IntoDart for crate::api::terminal::TermFrame {
             self.foreground.into_into_dart().into_dart(),
             self.background.into_into_dart().into_dart(),
             self.cursor_color.into_into_dart().into_dart(),
+            self.suggestion.into_into_dart().into_dart(),
+            self.suggestion_col.into_into_dart().into_dart(),
+            self.suggestion_prefix.into_into_dart().into_dart(),
         ]
         .into_dart()
     }
@@ -2559,6 +2599,9 @@ impl SseEncode for crate::api::terminal::TermFrame {
         <u32>::sse_encode(self.foreground, serializer);
         <u32>::sse_encode(self.background, serializer);
         <u32>::sse_encode(self.cursor_color, serializer);
+        <String>::sse_encode(self.suggestion, serializer);
+        <u16>::sse_encode(self.suggestion_col, serializer);
+        <u16>::sse_encode(self.suggestion_prefix, serializer);
     }
 }
 

@@ -9,6 +9,7 @@ import 'dart:io';
 import 'dart:ui' as ui;
 
 import 'package:cterminal/app_state.dart';
+import 'package:cterminal/i18n.dart';
 import 'package:cterminal/pane_tree.dart';
 import 'package:cterminal/src/rust/api/settings.dart' as rust;
 import 'package:cterminal/src/rust/frb_generated.dart';
@@ -101,7 +102,7 @@ void main() {
         'name': 'db-master',
         'type': 'ssh',
         'group': 'g1',
-        'options': {'host': 'db.example.com', 'port': 2222, 'user': 'admin', 'jumpHost': 'shot:web'},
+        'options': {'host': 'db.example.com', 'port': 2222, 'user': 'admin', 'jumpHost': 'shot:web', 'privateKeys': ['~/.ssh/db_example_ed25519']},
       },
     ];
     final saved = await tester.runAsync(() => rust.configSave(json: jsonEncode(config)));
@@ -126,6 +127,12 @@ void main() {
     app.openSettings('profiles:shot:db');
     await _settle(tester);
     await _shot(tester, '11-profile-editor-ssh');
+    await tester.tap(find.text(tr('认证')));
+    await _settle(tester);
+    await _shot(tester, '12-profile-editor-ssh-auth');
+    // 编辑器是弹窗，关掉再截后面的
+    await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+    await _settle(tester);
 
     app.selectTab(0);
     await _settle(tester);

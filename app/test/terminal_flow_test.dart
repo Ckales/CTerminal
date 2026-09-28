@@ -14,6 +14,7 @@ import 'package:cterminal/src/rust/api/terminal.dart';
 import 'package:cterminal/src/rust/frb_generated.dart';
 import 'package:cterminal/terminal/terminal_session.dart';
 import 'package:cterminal/ui/app_shell.dart';
+import 'package:cterminal/ui/settings/profiles_page.dart';
 import 'package:cterminal/window_control.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
@@ -157,6 +158,28 @@ void main() {
       await press(tester, LogicalKeyboardKey.enter);
       await waitFor(tester, () => screen(session).split('\n').contains('你好'), what: '确认后的中文');
       expect(screen(session), isNot(contains('ni')));
+      await tester.pumpWidget(const SizedBox());
+      app.dispose();
+    });
+
+    testWidgets('历史命令建议：回车记下，输入前缀时弹出，→ 补全', (tester) async {
+      final app = await boot(tester);
+      final session = app.activeSession!;
+
+      tester.testTextInput.enterText('echo history-marker');
+      await waitFor(tester, () => screen(session).contains(r'$ echo history-marker'), what: '命令回显');
+      await press(tester, LogicalKeyboardKey.enter);
+      await waitFor(tester, () => screen(session).split('\n').contains('history-marker'), what: 'echo 输出');
+
+      tester.testTextInput.enterText('echo hist');
+      await waitFor(tester, () => find.text('→').evaluate().isNotEmpty, what: '建议弹框');
+      expect(session.frame!.suggestion, 'echo history-marker');
+      await press(tester, LogicalKeyboardKey.arrowRight);
+      await waitFor(tester, () => r'$ echo history-marker'.allMatches(screen(session)).length == 2, what: '补全到命令行');
+      expect(find.text('→'), findsNothing);
+      await press(tester, LogicalKeyboardKey.enter);
+      await waitFor(tester, () => screen(session).split('\n').where((line) => line == 'history-marker').length == 2, what: '补全后执行');
+
       await tester.pumpWidget(const SizedBox());
       app.dispose();
     });
@@ -383,6 +406,87 @@ void main() {
       final defaults = jsonDecode(rust.configDefaults()) as Map<String, dynamic>;
       expect(app.config['highlightRules'], defaults['highlightRules']);
 
+      await tester.pumpWidget(const SizedBox());
+      app.dispose();
+    });
+
+    testWidgets('新建配置在弹窗里编辑，保存后关闭', (tester) async {
+      final app = await boot(tester);
+      await tester.binding.setSurfaceSize(const Size(1400, 800));
+      app.openSettings('profiles');
+      await tester.pumpAndSettle();
+      final before = (app.config['profiles'] as List).length;
+
+      await tester.tap(find.text(tr('新建')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text(tr('SSH 连接')));
+      await tester.pumpAndSettle();
+      expect(find.descendant(of: find.byType(Dialog), matching: find.text(tr('保存'))), findsOneWidget);
+      // 列表页留在弹窗背后
+      expect(find.text(tr('配置和连接')), findsWidgets);
+      // 桌面密度下输入框与下拉框等高
+      final field = find.descendant(of: find.byType(Dialog), matching: find.byType(TextField)).first;
+      expect(tester.getSize(field).height, ProfileEditor.fieldHeight);
+      // 右栏按标签页切换
+      expect(find.text(tr('添加转发')), findsNothing);
+      await tester.tap(find.text(tr('端口转发')));
+      await tester.pumpAndSettle();
+      expect(find.text(tr('添加转发')), findsOneWidget);
+
+      await tester.tap(find.text(tr('取消')));
+      await tester.pumpAndSettle();
+      expect(find.byType(Dialog), findsNothing);
+      expect((app.config['profiles'] as List).length, before);
+
+      await tester.tap(find.text(tr('新建')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text(tr('SSH 连接')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text(tr('保存')));
+      await waitFor(tester, () => (app.config['profiles'] as List).length == before + 1, what: '保存配置');
+      // 保存完才关弹窗，这里再多等一轮真实异步，然后让退出动画播完
+      await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 200)));
+      await tester.pumpAndSettle();
+      expect(find.byType(Dialog), findsNothing);
+
+      await tester.pumpWidget(const SizedBox());
+      app.dispose();
+    }, variant: TargetPlatformVariant.only(TargetPlatform.macOS));
+
+    testWidgets('私钥文件：系统面板从 ~/.ssh 打开，追加去重，逐行删除', (tester) async {
+      final app = await boot(tester);
+      await tester.binding.setSurfaceSize(const Size(1400, 800));
+      String? directory;
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(WindowControl.channel, (call) async {
+        if (call.method != 'pickFiles') return null;
+        directory = (call.arguments as Map)['directory'] as String;
+        return ['/keys/a', '/keys/b'];
+      });
+      app.openSettings('profiles');
+      await tester.pumpAndSettle();
+      await tester.tap(find.text(tr('新建')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text(tr('SSH 连接')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text(tr('认证')));
+      await tester.pumpAndSettle();
+
+      for (var round = 0; round < 2; round++) {
+        await tester.tap(find.text(tr('添加私钥')));
+        await tester.pumpAndSettle();
+      }
+      expect(directory, endsWith('${Platform.pathSeparator}.ssh'));
+      expect(find.text('/keys/a'), findsOneWidget);
+      expect(find.text('/keys/b'), findsOneWidget);
+
+      // 每行的删除按钮只删自己那一行
+      await tester.tap(find.descendant(of: find.ancestor(of: find.text('/keys/a'), matching: find.byType(Row)).first, matching: find.byIcon(Icons.delete_outline)));
+      await tester.pumpAndSettle();
+      expect(find.text('/keys/a'), findsNothing);
+      expect(find.text('/keys/b'), findsOneWidget);
+
+      await tester.tap(find.text(tr('取消')));
+      await tester.pumpAndSettle();
       await tester.pumpWidget(const SizedBox());
       app.dispose();
     });

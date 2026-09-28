@@ -28,6 +28,7 @@ fn fifty_megabytes_of_colored_output() {
         palette: Palette::default(),
         highlights: Vec::new(),
         bold_is_bright: true,
+        history: None,
     };
     let (session, tx) = Session::new(options, WinSize { cols: 200, rows: 60, cell_width: 8, cell_height: 16 }, sink);
 

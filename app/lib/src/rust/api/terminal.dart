@@ -27,6 +27,10 @@ TermFrame? termFrame({required int id}) =>
 void termInput({required int id, required List<int> data}) =>
     RustLib.instance.api.crateApiTerminalTermInput(id: id, data: data);
 
+/// 接受历史命令建议；没有建议返回 false
+bool termAcceptSuggestion({required int id}) =>
+    RustLib.instance.api.crateApiTerminalTermAcceptSuggestion(id: id);
+
 void termPaste({required int id, required String text}) =>
     RustLib.instance.api.crateApiTerminalTermPaste(id: id, text: text);
 
@@ -194,6 +198,11 @@ class TermFrame {
   final int background;
   final int cursorColor;
 
+  /// 历史命令建议（整条），没有为空
+  final String suggestion;
+  final int suggestionCol;
+  final int suggestionPrefix;
+
   const TermFrame({
     required this.cols,
     required this.rows,
@@ -209,6 +218,9 @@ class TermFrame {
     required this.foreground,
     required this.background,
     required this.cursorColor,
+    required this.suggestion,
+    required this.suggestionCol,
+    required this.suggestionPrefix,
   });
 
   @override
@@ -226,7 +238,10 @@ class TermFrame {
       mouseReporting.hashCode ^
       foreground.hashCode ^
       background.hashCode ^
-      cursorColor.hashCode;
+      cursorColor.hashCode ^
+      suggestion.hashCode ^
+      suggestionCol.hashCode ^
+      suggestionPrefix.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -246,7 +261,10 @@ class TermFrame {
           mouseReporting == other.mouseReporting &&
           foreground == other.foreground &&
           background == other.background &&
-          cursorColor == other.cursorColor;
+          cursorColor == other.cursorColor &&
+          suggestion == other.suggestion &&
+          suggestionCol == other.suggestionCol &&
+          suggestionPrefix == other.suggestionPrefix;
 }
 
 class TermLine {

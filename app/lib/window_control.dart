@@ -50,10 +50,11 @@ abstract final class WindowControl {
     exit(0);
   }
 
-  /// 原生打开面板，多选文件（ZMODEM 上传用）；取消或原生侧不支持时返回空列表
-  static Future<List<String>> pickFiles() async {
+  /// 原生打开面板，多选文件（ZMODEM 上传、选私钥）；取消或原生侧不支持时返回空列表。
+  /// directory：打开时所在的目录，空 = 系统默认（上次的位置）
+  static Future<List<String>> pickFiles({String directory = ''}) async {
     try {
-      final paths = await channel.invokeListMethod<String>('pickFiles');
+      final paths = await channel.invokeListMethod<String>('pickFiles', {'directory': directory});
       return paths ?? const [];
     } on MissingPluginException catch (error) {
       debugPrint('打开文件面板失败：$error');

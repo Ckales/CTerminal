@@ -79,11 +79,14 @@ class MainFlutterWindow: NSWindow, NSWindowDelegate {
         GlobalHotkey.shared.register(call.arguments as? [String: Any]) { [weak self] in self?.toggleVisibility() }
         result(nil)
       case "pickFiles":
-        // ZMODEM 上传（远端 rz 在等）：多选文件，取消返回空列表
+        // ZMODEM 上传（远端 rz 在等）、选私钥：多选文件，取消返回空列表
         let panel = NSOpenPanel()
         panel.canChooseFiles = true
         panel.canChooseDirectories = false
         panel.allowsMultipleSelection = true
+        if let directory = (call.arguments as? [String: Any])?["directory"] as? String, !directory.isEmpty {
+          panel.directoryURL = URL(fileURLWithPath: directory, isDirectory: true)
+        }
         panel.beginSheetModal(for: self) { response in
           result(response == .OK ? panel.urls.map { $0.path } : [String]())
         }

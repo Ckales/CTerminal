@@ -70,6 +70,10 @@ pub struct TermFrame {
     pub foreground: u32,
     pub background: u32,
     pub cursor_color: u32,
+    /// 历史命令建议（整条），没有为空
+    pub suggestion: String,
+    pub suggestion_col: u16,
+    pub suggestion_prefix: u16,
 }
 
 /// 打开会话。id 由 Dart 分配，事件流在会话结束（exit）后自然停止。
@@ -119,6 +123,9 @@ pub fn term_frame(id: u32) -> Option<TermFrame> {
         foreground: frame.foreground,
         background: frame.background,
         cursor_color: frame.cursor_color,
+        suggestion: frame.suggestion,
+        suggestion_col: frame.suggestion_col,
+        suggestion_prefix: frame.suggestion_prefix,
     })
 }
 
@@ -128,6 +135,12 @@ pub fn term_input(id: u32, data: Vec<u8>) {
     if let Some(session) = session(id) {
         session.input(&data);
     }
+}
+
+/// 接受历史命令建议；没有建议返回 false
+#[frb(sync)]
+pub fn term_accept_suggestion(id: u32) -> bool {
+    session(id).is_some_and(|session| session.accept_suggestion())
 }
 
 #[frb(sync)]
