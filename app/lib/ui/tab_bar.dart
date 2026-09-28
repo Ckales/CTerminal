@@ -165,6 +165,7 @@ class _TabItem extends StatefulWidget {
 
 class _TabItemState extends State<_TabItem> {
   bool _hover = false;
+  DateTime? _lastTap;
 
   @override
   Widget build(BuildContext context) {
@@ -197,9 +198,18 @@ class _TabItemState extends State<_TabItem> {
           if (event.buttons == kMiddleMouseButton) app.requestCloseTab(tab);
         },
         child: GestureDetector(
-          onTap: () => app.selectTab(widget.index),
+          // 双击自己判断：挂 onDoubleTap 的话，单击要等 300ms 双击超时才触发，切换标签会明显卡一下
+          onTap: () {
+            final now = DateTime.now();
+            final last = _lastTap;
+            _lastTap = now;
+            app.selectTab(widget.index);
+            if (last != null && now.difference(last) < kDoubleTapTimeout) {
+              _lastTap = null;
+              app.runAction('rename-tab');
+            }
+          },
           onSecondaryTapUp: (details) => _showMenu(context, app, details.globalPosition),
-          onDoubleTap: () => app.runAction('rename-tab'),
           child: Container(
             height: widget.vertical ? 34 : AppTabBar.height,
             decoration: BoxDecoration(

@@ -13,7 +13,7 @@ pub fn term_options(config: &Config) -> TermOptions {
         word_separators: config.terminal.word_separators.clone(),
         scroll_on_input: config.terminal.scroll_on_input,
         palette: schemes::palette_for(config),
-        highlights: highlight::compile(&config.highlight_rules),
+        highlights: highlight::compile(&config.highlight_rules, config.highlight_permissions),
         bold_is_bright: config.terminal.bold_is_bright,
     }
 }

@@ -41,8 +41,6 @@ class ProfilesPage extends StatefulWidget {
 }
 
 class _ProfilesPageState extends State<ProfilesPage> {
-  Map<String, dynamic>? _editing;
-  bool _isNew = false;
   String _filter = '';
 
   @override
@@ -52,7 +50,7 @@ class _ProfilesPageState extends State<ProfilesPage> {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         final app = AppScope.read(context);
         final found = app.profiles.where((profile) => profile['id'] == widget.editId).firstOrNull;
-        if (found != null) setState(() => _editing = _deepCopy(found));
+        if (found != null) _openEditor(_deepCopy(found), isNew: false);
       });
     }
   }
@@ -78,10 +76,42 @@ class _ProfilesPageState extends State<ProfilesPage> {
       ),
     );
     if (type == null) return;
-    setState(() {
-      _editing = _blankProfile(type);
-      _isNew = true;
-    });
+    _openEditor(_blankProfile(type), isNew: true);
+  }
+
+  /// 编辑器以弹窗打开，列表留在背后，方便对照
+  Future<void> _openEditor(Map<String, dynamic> profile, {required bool isNew}) {
+    return showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) {
+        void close() => Navigator.of(dialogContext).pop();
+        final screen = MediaQuery.sizeOf(dialogContext);
+        return Dialog(
+          insetPadding: const EdgeInsets.all(24),
+          clipBehavior: Clip.antiAlias,
+          child: SizedBox(
+            width: 720,
+            height: screen.height * 0.85,
+            child: ProfileEditor(
+              key: ValueKey(profile['id']),
+              profile: profile,
+              isNew: isNew,
+              onSave: (edited) async {
+                await _save(edited);
+                close();
+              },
+              onCancel: close,
+              onDelete: isNew
+                  ? null
+                  : () async {
+                      if (await _delete(profile)) close();
+                    },
+            ),
+          ),
+        );
+      },
+    );
   }
 
   Future<void> _save(Map<String, dynamic> profile) async {
@@ -96,21 +126,18 @@ class _ProfilesPageState extends State<ProfilesPage> {
         profiles.add(profile);
       }
     });
-    setState(() {
-      _editing = null;
-      _isNew = false;
-    });
   }
 
-  Future<void> _delete(Map<String, dynamic> profile) async {
+  /// 返回是否真的删了（确认框里点了取消返回 false）
+  Future<bool> _delete(Map<String, dynamic> profile) async {
     final app = AppScope.read(context);
     final ok = await showConfirm(context, title: '删除配置？', message: tr('将删除「{name}」，同时清除钥匙串里保存的密码。', {'name': profile['name']}), confirm: '删除', danger: true);
-    if (!ok) return;
+    if (!ok) return false;
     await rust.secretDelete(kind: 'password', profileId: profile['id'] as String);
     await app.updateConfig((config) {
       (config['profiles'] as List).removeWhere((existing) => (existing as Map)['id'] == profile['id']);
     });
-    setState(() => _editing = null);
+    return true;
   }
 
   void _duplicate(Map<String, dynamic> profile) {
@@ -119,32 +146,11 @@ class _ProfilesPageState extends State<ProfilesPage> {
     copy['name'] = tr('{name} 副本', {'name': profile['name']});
     copy.remove('isBuiltin');
     if (copy['group'] == 'ssh-config') copy['group'] = '';
-    setState(() {
-      _editing = copy;
-      _isNew = true;
-    });
+    _openEditor(copy, isNew: true);
   }
 
   @override
   Widget build(BuildContext context) {
-    final editing = _editing;
-    if (editing != null) {
-      return ProfileEditor(
-        key: ValueKey(editing['id']),
-        profile: editing,
-        isNew: _isNew,
-        onSave: _save,
-        onCancel: () => setState(() {
-          _editing = null;
-          _isNew = false;
-        }),
-        onDelete: _isNew ? null : () => _delete(editing),
-      );
-    }
-    return _list(context);
-  }
-
-  Widget _list(BuildContext context) {
     final app = AppScope.of(context);
     final colors = AppTheme.of(context);
     final grouped = <String, List<Map<String, dynamic>>>{};
@@ -195,11 +201,11 @@ class _ProfilesPageState extends State<ProfilesPage> {
           leading: Icon(profileIcon(profile), size: 18, color: color ?? colors.textDim),
           title: Text(profile['name'] as String, style: TextStyle(fontSize: 13, color: colors.text)),
           subtitle: Text(profileDescription(profile), style: TextStyle(fontSize: 11.5, color: colors.textDim)),
-          onTap: builtin ? null : () => setState(() => _editing = _deepCopy(profile)),
+          onTap: builtin ? null : () => _openEditor(_deepCopy(profile), isNew: false),
           trailing: Row(mainAxisSize: MainAxisSize.min, children: [
             IconButton(tooltip: tr('在新标签页打开'), iconSize: 16, icon: const Icon(Icons.play_arrow_outlined), onPressed: () => app.newTab(profile: profile)),
             IconButton(tooltip: tr(builtin ? '复制为新配置后可编辑' : '复制'), iconSize: 16, icon: const Icon(Icons.copy_outlined), onPressed: () => _duplicate(profile)),
-            if (!builtin) IconButton(tooltip: tr('编辑'), iconSize: 16, icon: const Icon(Icons.edit_outlined), onPressed: () => setState(() => _editing = _deepCopy(profile))),
+            if (!builtin) IconButton(tooltip: tr('编辑'), iconSize: 16, icon: const Icon(Icons.edit_outlined), onPressed: () => _openEditor(_deepCopy(profile), isNew: false)),
           ]),
         ),
       ),
@@ -388,9 +394,8 @@ class _ProfileEditorState extends State<ProfileEditor> {
     final groups = {'': '未分组', for (final group in (app.config['groups'] as List)) (group as Map)['id'] as String: group['name'] as String};
     final typeNames = {'local': '本地终端', 'ssh': 'SSH', 'telnet': 'Telnet', 'serial': '串口'};
 
-    return ListView(padding: const EdgeInsets.fromLTRB(32, 24, 32, 32), children: [
+    return ListView(padding: const EdgeInsets.fromLTRB(24, 16, 24, 24), children: [
       Row(children: [
-        IconButton(icon: const Icon(Icons.arrow_back, size: 18), onPressed: widget.onCancel, tooltip: tr('返回')),
         Text(widget.isNew ? tr('新建{type}配置', {'type': tr(typeNames[_type]!)}) : tr('编辑配置'), style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: colors.text)),
         const Spacer(),
         if (widget.onDelete != null)

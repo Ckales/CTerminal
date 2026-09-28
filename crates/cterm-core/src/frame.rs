@@ -391,7 +391,7 @@ mod tests {
             HighlightRule { pattern: "or".into(), foreground: Some(2), bold: true, ..HighlightRule::default() },
             HighlightRule { pattern: "ok".into(), background: Some(4), ..HighlightRule::default() },
         ];
-        let highlights = crate::highlight::compile(&rules);
+        let highlights = crate::highlight::compile(&rules, false);
         let palette = Palette::default();
         let frame = render_with("a ERROR b ok\r\n\x1b[32merror\x1b[0m for", true, &highlights);
 

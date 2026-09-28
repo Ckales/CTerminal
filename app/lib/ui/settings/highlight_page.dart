@@ -56,6 +56,7 @@ class HighlightPage extends StatelessWidget {
           style: TextStyle(fontSize: 12, color: colors.textDim),
         ),
       ),
+      const ConfigSwitch(path: 'highlightPermissions', label: '权限串按字符上色', help: 'ls -l 里的 drwxr-xr-x：类型、r、w、x、- 各用一种颜色，优先于下面的规则'),
       for (var index = 0; index < rules.length; index++)
         _RuleRow(
           rule: rules[index] as Map<String, dynamic>,

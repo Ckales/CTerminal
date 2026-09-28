@@ -28,6 +28,8 @@ pub struct Config {
     pub custom_color_schemes: Vec<ColorScheme>,
     /// 关键字高亮，靠前的规则优先
     pub highlight_rules: Vec<HighlightRule>,
+    /// ls -l 的权限串按字符上色（内置，优先于上面的规则）
+    pub highlight_permissions: bool,
     /// 最近使用的 profile id，选择器里排在前面
     pub recent_profiles: Vec<String>,
 }
@@ -45,6 +47,7 @@ impl Default for Config {
             ssh: SshSettings::default(),
             custom_color_schemes: Vec::new(),
             highlight_rules: default_highlight_rules(),
+            highlight_permissions: true,
             recent_profiles: Vec::new(),
         }
     }
@@ -418,12 +421,12 @@ fn default_highlight_rules() -> Vec<HighlightRule> {
         rule(r#"https?://[^\s"'<>]+"#, false, 4),
         // 中文字在 Unicode 里算单词字符，前后常紧挨着别的字，不能套 \b
         rule(
-            r"\b(errors?|fatal|fail(s|ed|ure)?|panic(ked)?|exception|critical|crash(ed)?|abort(ed)?|denied|refused|unreachable|timeout|timed out|not found|no such file|invalid|unauthorized|forbidden|killed|segmentation fault)\b|失败|错误|异常|拒绝|超时|无法|崩溃|不存在",
+            r"\b(errors?|fatal|fail(s|ed|ure)?|panic(ked)?|exception|critical|crash(ed)?|abort(ed)?|denied|refused|unreachable|timeout|timed out|not found|no such file|invalid|incorrect|unauthorized|forbidden|killed|segmentation fault|bad|cannot|unknown|unsupported|wrong|false)\b|失败|错误|异常|拒绝|超时|无法|崩溃|不存在",
             true,
             1,
         ),
-        rule(r"\b(warn(ing)?s?|deprecated|caution|retry(ing)?)\b|警告|注意|重试", true, 3),
-        rule(r"\b(ok|success(ful(ly)?)?|succeeded|passed|done|completed?)\b|成功|完成|通过", true, 2),
+        rule(r"\b(warn(ing)?s?|deprecated|caution|retry(ing)?|closed|disconnected|exited|skipped|stopped|terminated)\b|警告|注意|重试", true, 3),
+        rule(r"\b(ok|success(ful(ly)?)?|succeeded|passed|done|completed?|true|yes|valid)\b|成功|完成|通过", true, 2),
         // 日志级别区分大小写，免得正文里的 info / debug 也被染色；ERROR、WARN 已被上面两条覆盖
         rule(r"\b(INFO|NOTICE)\b", false, 2),
         rule(r"\b(DEBUG|TRACE|VERBOSE)\b", false, 4),
@@ -437,11 +440,18 @@ fn default_highlight_rules() -> Vec<HighlightRule> {
         rule(r"\b[0-9a-f]{2}([:-][0-9a-f]{2}){5}\b", true, 6),
         rule(r"\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b", true, 12),
         rule(
-            r"\b[0-9]{4}[-/][0-9]{2}[-/][0-9]{2}([T ][0-9]{2}:[0-9]{2}(:[0-9]{2}([.,][0-9]+)?)?)?\b|\b[0-9]{2}:[0-9]{2}:[0-9]{2}([.,][0-9]+)?\b",
+            r"\b[0-9]{4}[-/][0-9]{2}[-/][0-9]{2}([T ][0-9]{2}:[0-9]{2}(:[0-9]{2}([.,][0-9]+)?)?)?\b|\b[0-9]{1,2}:[0-9]{2}(:[0-9]{2}([.,][0-9]+)?)?\b",
             false,
-            5,
+            10,
         ),
-        rule(r"\b(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\b", false, 13),
+        // ls -l / syslog 里的「Mar  4」和 date 输出的星期；月份要带日期，免得正文里的 May 被染色
+        rule(r"\b(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) +[0-9]{1,2}\b|\b(Mon|Tue|Wed|Thu|Fri|Sat|Sun)\b", false, 10),
+        rule(r"\b(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\b", false, 5),
+        rule(r#""[^"\n]*""#, false, 11),
+        // 命令行选项；regex 不支持后顾，前面的空白一起匹配进来，空白换前景色看不出来
+        rule(r"(^|\s)--?[A-Za-z][\w-]*", false, 3),
+        // 数字放最后：IP、时间、UUID 里的数字归前面的规则。带单位的大小 / 时长整体算一个数
+        rule(r"\b[0-9]+(\.[0-9]+)?([KMGTP]i?B?|[kmgt]b?|ms|s|h|d)?\b%?", false, 13),
     ]
 }
 

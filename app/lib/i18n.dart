@@ -173,6 +173,8 @@ const _english = <String, String>{
   '关键字高亮': 'Keyword highlighting',
   '添加规则': 'Add rule',
   '恢复默认规则': 'Restore defaults',
+  '权限串按字符上色': 'Color permission strings',
+  'ls -l 里的 drwxr-xr-x：类型、r、w、x、- 各用一种颜色，优先于下面的规则': 'drwxr-xr-x in ls -l: file type, r, w, x and - each get their own color, ahead of the rules below',
   '恢复默认规则？': 'Restore default rules?',
   '当前的高亮规则会被替换为默认规则，自己添加或修改过的规则会丢失。': 'Current highlight rules will be replaced by the defaults. Rules you added or edited will be lost.',
   '按正则给程序没有上色的文字换颜色，颜色取自当前配色方案。靠前的规则优先；vim 等全屏程序里不生效。':

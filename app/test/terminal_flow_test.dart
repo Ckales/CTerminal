@@ -211,6 +211,29 @@ void main() {
       app.dispose();
     });
 
+    testWidgets('单击标签页立即切换，双击重命名', (tester) async {
+      final app = await boot(tester);
+      await press(tester, LogicalKeyboardKey.keyT, meta: true);
+      await waitFor(tester, () => app.tabs.length == 2, what: '⌘T 新建标签页');
+      expect(app.activeIndex, 1);
+
+      // 只推一帧：不能等双击超时才切换
+      await tester.tap(find.text('1'));
+      await tester.pump();
+      expect(app.activeIndex, 0);
+
+      var renamed = 0;
+      app.showRenameDialog = (title, value, onDone) async => renamed++;
+      await tester.tap(find.text('1'));
+      await tester.pump(const Duration(milliseconds: 50));
+      await tester.tap(find.text('1'));
+      await tester.pump();
+      expect(renamed, 1);
+
+      await tester.pumpWidget(const SizedBox());
+      app.dispose();
+    });
+
     testWidgets('拖放文件：路径转义后粘贴到落点窗格', (tester) async {
       final app = await boot(tester);
       final session = app.activeSession!;
