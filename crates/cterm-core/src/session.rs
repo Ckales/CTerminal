@@ -1002,6 +1002,9 @@ mod tests {
         type_line("git status");
         session.input(b"\r");
         harness.feed("\r\nclean\r\n$ ");
+        type_line("git stash");
+        session.input(b"\r");
+        harness.feed("\r\n$ ");
         // 没回显的密码读不到，不记
         harness.feed("Password: ");
         session.input(b"hunter22");
@@ -1012,16 +1015,19 @@ mod tests {
         assert_eq!(session.frame().suggestion_prefix, 3);
         type_line(" ");
         let frame = session.frame();
-        assert_eq!((frame.suggestion.as_str(), frame.suggestion_col, frame.suggestion_prefix), ("git status", 2, 4));
+        assert_eq!(frame.suggestions, ["git stash", "git status"]);
+        assert_eq!((frame.suggestion_col, frame.suggestion_prefix), (2, 4));
         harness.take_written();
-        assert!(session.accept_suggestion());
+        // 界面传回的不是当前候选（列表已变）就不发
+        assert!(!session.accept_suggestion("git log"));
+        assert!(session.accept_suggestion("git status"));
         assert_eq!(harness.take_written(), b"status");
         // Ctrl-C 放弃这一行后没有起点，不再给建议
         session.input(&[0x03]);
         harness.feed("^C\r\n$ ");
-        assert_eq!(session.frame().suggestion, "");
-        assert!(!session.accept_suggestion());
-        assert_eq!(session.history.as_ref().unwrap().lock().unwrap().suggest("h"), None);
+        assert!(session.frame().suggestions.is_empty());
+        assert!(!session.accept_suggestion("git status"));
+        assert!(session.history.as_ref().unwrap().lock().unwrap().suggest("h", 8).is_empty());
     }
 
     #[test]

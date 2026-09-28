@@ -168,7 +168,10 @@ abstract class RustLibApi extends BaseApi {
 
   Future<void> crateApiSettingsStateSave({required String json});
 
-  bool crateApiTerminalTermAcceptSuggestion({required int id});
+  bool crateApiTerminalTermAcceptSuggestion({
+    required int id,
+    required String command,
+  });
 
   void crateApiTerminalTermApplySettings();
 
@@ -1054,12 +1057,16 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       const TaskConstMeta(debugName: "state_save", argNames: ["json"]);
 
   @override
-  bool crateApiTerminalTermAcceptSuggestion({required int id}) {
+  bool crateApiTerminalTermAcceptSuggestion({
+    required int id,
+    required String command,
+  }) {
     return handler.executeSync(
       SyncTask(
         callFfi: () {
           final serializer = SseSerializer(generalizedFrbRustBinding);
           sse_encode_u_32(id, serializer);
+          sse_encode_String(command, serializer);
           return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 28)!;
         },
         codec: SseCodec(
@@ -1067,7 +1074,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           decodeErrorData: null,
         ),
         constMeta: kCrateApiTerminalTermAcceptSuggestionConstMeta,
-        argValues: [id],
+        argValues: [id, command],
         apiImpl: this,
       ),
     );
@@ -1076,7 +1083,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   TaskConstMeta get kCrateApiTerminalTermAcceptSuggestionConstMeta =>
       const TaskConstMeta(
         debugName: "term_accept_suggestion",
-        argNames: ["id"],
+        argNames: ["id", "command"],
       );
 
   @override
@@ -1948,7 +1955,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       foreground: dco_decode_u_32(arr[11]),
       background: dco_decode_u_32(arr[12]),
       cursorColor: dco_decode_u_32(arr[13]),
-      suggestion: dco_decode_String(arr[14]),
+      suggestions: dco_decode_list_String(arr[14]),
       suggestionCol: dco_decode_u_16(arr[15]),
       suggestionPrefix: dco_decode_u_16(arr[16]),
     );
@@ -2259,7 +2266,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var var_foreground = sse_decode_u_32(deserializer);
     var var_background = sse_decode_u_32(deserializer);
     var var_cursorColor = sse_decode_u_32(deserializer);
-    var var_suggestion = sse_decode_String(deserializer);
+    var var_suggestions = sse_decode_list_String(deserializer);
     var var_suggestionCol = sse_decode_u_16(deserializer);
     var var_suggestionPrefix = sse_decode_u_16(deserializer);
     return TermFrame(
@@ -2277,7 +2284,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       foreground: var_foreground,
       background: var_background,
       cursorColor: var_cursorColor,
-      suggestion: var_suggestion,
+      suggestions: var_suggestions,
       suggestionCol: var_suggestionCol,
       suggestionPrefix: var_suggestionPrefix,
     );
@@ -2598,7 +2605,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_u_32(self.foreground, serializer);
     sse_encode_u_32(self.background, serializer);
     sse_encode_u_32(self.cursorColor, serializer);
-    sse_encode_String(self.suggestion, serializer);
+    sse_encode_list_String(self.suggestions, serializer);
     sse_encode_u_16(self.suggestionCol, serializer);
     sse_encode_u_16(self.suggestionPrefix, serializer);
   }

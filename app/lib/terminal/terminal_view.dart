@@ -135,6 +135,8 @@ class _TerminalViewState extends State<TerminalView> with DeltaTextInputClient {
 
   double _bellFlash = 0;
   AppState? _app;
+  /// 历史建议里用 ↑↓ 选中的那条；不在当前候选里就等于没选
+  String? _pickedSuggestion;
 
   TerminalSession get session => widget.session;
 
@@ -333,6 +335,7 @@ class _TerminalViewState extends State<TerminalView> with DeltaTextInputClient {
 
   void _sendBytes(List<int> bytes) {
     final app = AppScope.read(context);
+    _pickedSuggestion = null;
     _restartBlink();
     for (final target in app.inputTargets()) {
       termInput(id: target.id, data: bytes);
@@ -358,6 +361,7 @@ class _TerminalViewState extends State<TerminalView> with DeltaTextInputClient {
 
   void _sendText(String text) {
     final app = AppScope.read(context);
+    _pickedSuggestion = null;
     _restartBlink();
     for (final target in app.inputTargets()) {
       termKey(id: target.id, key: '', text: text, mods: 0, altIsMeta: false);
@@ -430,13 +434,8 @@ class _TerminalViewState extends State<TerminalView> with DeltaTextInputClient {
     }
 
     final mods = currentMods();
-    // → 接受历史命令建议（只在光标位于输入末尾时有建议，不影响行内移动）
-    if (event.logicalKey == LogicalKeyboardKey.arrowRight && mods == 0 && _suggestion(session.frame) != null) {
-      if (termAcceptSuggestion(id: session.id)) {
-        _restartBlink();
-        return KeyEventResult.handled;
-      }
-    }
+    if (mods == 0 && _onSuggestionKey(event.logicalKey)) return KeyEventResult.handled;
+    _pickedSuggestion = null;
     final altIsMeta = app.terminal['altIsMeta'] == true || !Platform.isMacOS;
     final special = _specialKeys[event.logicalKey];
     String? key;
@@ -826,47 +825,86 @@ class _TerminalViewState extends State<TerminalView> with DeltaTextInputClient {
 
   // ---------- 历史命令建议 ----------
 
-  String? _suggestion(TermFrame? frame) {
-    if (frame == null || frame.suggestion.isEmpty || !_focus.hasFocus || _composing.isNotEmpty || _searchOpen) return null;
-    if (frame.displayOffset != 0 || !frame.cursorVisible || session.exited) return null;
-    return frame.suggestion;
+  List<String> _suggestions(TermFrame? frame) {
+    if (frame == null || !_focus.hasFocus || _composing.isNotEmpty || _searchOpen) return const [];
+    if (frame.displayOffset != 0 || !frame.cursorVisible || session.exited) return const [];
+    return frame.suggestions;
   }
 
-  Widget _suggestionPopup(AppColors colors, TerminalMetrics metrics) {
+  /// 有候选时：↓ 进入列表 / 下移，↑ 上移（没选中时交给 shell 翻历史），
+  /// 回车选中（没选中时照常执行命令），→ 选中当前项或第一项
+  bool _onSuggestionKey(LogicalKeyboardKey key) {
+    final commands = _suggestions(session.frame);
+    if (commands.isEmpty) return false;
+    final index = _pickedSuggestion == null ? -1 : commands.indexOf(_pickedSuggestion!);
+    String? accept;
+    if (key == LogicalKeyboardKey.arrowDown) {
+      setState(() => _pickedSuggestion = commands[(index + 1).clamp(0, commands.length - 1)]);
+      return true;
+    } else if (key == LogicalKeyboardKey.arrowUp && index >= 0) {
+      setState(() => _pickedSuggestion = index == 0 ? null : commands[index - 1]);
+      return true;
+    } else if ((key == LogicalKeyboardKey.enter || key == LogicalKeyboardKey.numpadEnter) && index >= 0) {
+      accept = commands[index];
+    } else if (key == LogicalKeyboardKey.arrowRight) {
+      accept = commands[index < 0 ? 0 : index];
+    }
+    if (accept == null) return false;
+    _pickedSuggestion = null;
+    _restartBlink();
+    // 候选已过期（shell 输出变了）时照常把按键交给终端
+    return termAcceptSuggestion(id: session.id, command: accept);
+  }
+
+  Widget _suggestionPopup(AppColors colors, TerminalMetrics metrics, double viewHeight) {
     return ListenableBuilder(
       listenable: session,
       builder: (context, _) {
         final frame = session.frame;
-        final command = _suggestion(frame);
-        if (frame == null || command == null) return const SizedBox.shrink();
+        final commands = _suggestions(frame);
+        if (frame == null || commands.isEmpty) return const SizedBox.shrink();
         final padding = _padding;
-        final height = metrics.cellHeight + 8;
-        final below = frame.cursorRow + 1 < frame.rows;
-        final top = below ? padding + (frame.cursorRow + 1) * metrics.cellHeight + 2 : padding + frame.cursorRow * metrics.cellHeight - height - 2;
-        final typed = String.fromCharCodes(command.runes.take(frame.suggestionPrefix));
+        final rowHeight = metrics.cellHeight + 6;
+        final height = commands.length * rowHeight + 2;
+        final belowTop = padding + (frame.cursorRow + 1) * metrics.cellHeight + 2;
+        final top = belowTop + height <= viewHeight ? belowTop : padding + frame.cursorRow * metrics.cellHeight - height - 2;
         final style = metrics.baseStyle();
+        final picked = commands.indexOf(_pickedSuggestion ?? '');
+        // → 会补全的那一项显示提示
+        final target = picked < 0 ? 0 : picked;
+        final rows = <Widget>[];
+        for (var index = 0; index < commands.length; index++) {
+          final command = commands[index];
+          final typed = String.fromCharCodes(command.runes.take(frame.suggestionPrefix));
+          rows.add(Container(
+            height: rowHeight,
+            padding: const EdgeInsets.symmetric(horizontal: 6),
+            color: index == picked ? colors.accent.withValues(alpha: 0.3) : null,
+            child: Row(children: [
+              Text.rich(
+                TextSpan(children: [
+                  TextSpan(text: typed, style: style.copyWith(color: colors.text)),
+                  TextSpan(text: command.substring(typed.length), style: style.copyWith(color: index == picked ? colors.text : colors.textDim)),
+                ]),
+              ),
+              const Spacer(),
+              const SizedBox(width: 12),
+              Text(index == target ? '→' : '', style: TextStyle(fontSize: 11, color: colors.textDim)),
+            ]),
+          ));
+        }
         return Positioned(
           left: padding + frame.suggestionCol * metrics.cellWidth - 6,
-          top: top,
+          top: top.clamp(0, double.infinity),
           child: IgnorePointer(
             child: Container(
-              height: height,
-              padding: const EdgeInsets.symmetric(horizontal: 6),
+              clipBehavior: Clip.antiAlias,
               decoration: BoxDecoration(
                 color: colors.surfaceRaised,
                 border: Border.all(color: colors.border),
                 borderRadius: BorderRadius.circular(4),
               ),
-              child: Row(mainAxisSize: MainAxisSize.min, children: [
-                Text.rich(
-                  TextSpan(children: [
-                    TextSpan(text: typed, style: style.copyWith(color: colors.text)),
-                    TextSpan(text: command.substring(typed.length), style: style.copyWith(color: colors.textDim)),
-                  ]),
-                ),
-                const SizedBox(width: 10),
-                Text('→', style: TextStyle(fontSize: 11, color: colors.textDim)),
-              ]),
+              child: IntrinsicWidth(child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: rows)),
             ),
           ),
         );
@@ -967,7 +1005,7 @@ class _TerminalViewState extends State<TerminalView> with DeltaTextInputClient {
                   ),
                 ),
                 if (frame != null) _scrollbar(frame, size.height),
-                _suggestionPopup(colors, metrics),
+                _suggestionPopup(colors, metrics, size.height),
                 if (_bellFlash > 0) Positioned.fill(child: IgnorePointer(child: ColoredBox(color: Colors.white.withValues(alpha: _bellFlash)))),
                 if (session.exited) _exitBar(colors),
                 if (_searchOpen) Positioned(top: 8, right: 16, child: _searchBar(colors)),

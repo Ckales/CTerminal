@@ -27,9 +27,11 @@ TermFrame? termFrame({required int id}) =>
 void termInput({required int id, required List<int> data}) =>
     RustLib.instance.api.crateApiTerminalTermInput(id: id, data: data);
 
-/// 接受历史命令建议；没有建议返回 false
-bool termAcceptSuggestion({required int id}) =>
-    RustLib.instance.api.crateApiTerminalTermAcceptSuggestion(id: id);
+/// 接受选中的历史命令建议；它已不是当前候选时返回 false
+bool termAcceptSuggestion({required int id, required String command}) => RustLib
+    .instance
+    .api
+    .crateApiTerminalTermAcceptSuggestion(id: id, command: command);
 
 void termPaste({required int id, required String text}) =>
     RustLib.instance.api.crateApiTerminalTermPaste(id: id, text: text);
@@ -198,8 +200,8 @@ class TermFrame {
   final int background;
   final int cursorColor;
 
-  /// 历史命令建议（整条），没有为空
-  final String suggestion;
+  /// 历史命令建议（整条，新的在前），没有为空
+  final List<String> suggestions;
   final int suggestionCol;
   final int suggestionPrefix;
 
@@ -218,7 +220,7 @@ class TermFrame {
     required this.foreground,
     required this.background,
     required this.cursorColor,
-    required this.suggestion,
+    required this.suggestions,
     required this.suggestionCol,
     required this.suggestionPrefix,
   });
@@ -239,7 +241,7 @@ class TermFrame {
       foreground.hashCode ^
       background.hashCode ^
       cursorColor.hashCode ^
-      suggestion.hashCode ^
+      suggestions.hashCode ^
       suggestionCol.hashCode ^
       suggestionPrefix.hashCode;
 
@@ -262,7 +264,7 @@ class TermFrame {
           foreground == other.foreground &&
           background == other.background &&
           cursorColor == other.cursorColor &&
-          suggestion == other.suggestion &&
+          suggestions == other.suggestions &&
           suggestionCol == other.suggestionCol &&
           suggestionPrefix == other.suggestionPrefix;
 }

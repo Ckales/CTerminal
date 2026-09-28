@@ -961,9 +961,13 @@ fn wire__crate__api__terminal__term_accept_suggestion_impl(
             let mut deserializer =
                 flutter_rust_bridge::for_generated::SseDeserializer::new(message);
             let api_id = <u32>::sse_decode(&mut deserializer);
+            let api_command = <String>::sse_decode(&mut deserializer);
             deserializer.end();
             transform_result_sse::<_, ()>((move || {
-                let output_ok = Ok::<_, ()>(crate::api::terminal::term_accept_suggestion(api_id))?;
+                let output_ok = Ok::<_, ()>(crate::api::terminal::term_accept_suggestion(
+                    api_id,
+                    api_command,
+                ))?;
                 std::result::Result::Ok(output_ok)
             })())
         },
@@ -2032,7 +2036,7 @@ impl SseDecode for crate::api::terminal::TermFrame {
         let mut var_foreground = <u32>::sse_decode(deserializer);
         let mut var_background = <u32>::sse_decode(deserializer);
         let mut var_cursorColor = <u32>::sse_decode(deserializer);
-        let mut var_suggestion = <String>::sse_decode(deserializer);
+        let mut var_suggestions = <Vec<String>>::sse_decode(deserializer);
         let mut var_suggestionCol = <u16>::sse_decode(deserializer);
         let mut var_suggestionPrefix = <u16>::sse_decode(deserializer);
         return crate::api::terminal::TermFrame {
@@ -2050,7 +2054,7 @@ impl SseDecode for crate::api::terminal::TermFrame {
             foreground: var_foreground,
             background: var_background,
             cursor_color: var_cursorColor,
-            suggestion: var_suggestion,
+            suggestions: var_suggestions,
             suggestion_col: var_suggestionCol,
             suggestion_prefix: var_suggestionPrefix,
         };
@@ -2312,7 +2316,7 @@ impl flutter_rust_bridge::IntoDart for crate::api::terminal::TermFrame {
             self.foreground.into_into_dart().into_dart(),
             self.background.into_into_dart().into_dart(),
             self.cursor_color.into_into_dart().into_dart(),
-            self.suggestion.into_into_dart().into_dart(),
+            self.suggestions.into_into_dart().into_dart(),
             self.suggestion_col.into_into_dart().into_dart(),
             self.suggestion_prefix.into_into_dart().into_dart(),
         ]
@@ -2599,7 +2603,7 @@ impl SseEncode for crate::api::terminal::TermFrame {
         <u32>::sse_encode(self.foreground, serializer);
         <u32>::sse_encode(self.background, serializer);
         <u32>::sse_encode(self.cursor_color, serializer);
-        <String>::sse_encode(self.suggestion, serializer);
+        <Vec<String>>::sse_encode(self.suggestions, serializer);
         <u16>::sse_encode(self.suggestion_col, serializer);
         <u16>::sse_encode(self.suggestion_prefix, serializer);
     }

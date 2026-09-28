@@ -70,8 +70,8 @@ pub struct TermFrame {
     pub foreground: u32,
     pub background: u32,
     pub cursor_color: u32,
-    /// 历史命令建议（整条），没有为空
-    pub suggestion: String,
+    /// 历史命令建议（整条，新的在前），没有为空
+    pub suggestions: Vec<String>,
     pub suggestion_col: u16,
     pub suggestion_prefix: u16,
 }
@@ -123,7 +123,7 @@ pub fn term_frame(id: u32) -> Option<TermFrame> {
         foreground: frame.foreground,
         background: frame.background,
         cursor_color: frame.cursor_color,
-        suggestion: frame.suggestion,
+        suggestions: frame.suggestions,
         suggestion_col: frame.suggestion_col,
         suggestion_prefix: frame.suggestion_prefix,
     })
@@ -137,10 +137,10 @@ pub fn term_input(id: u32, data: Vec<u8>) {
     }
 }
 
-/// 接受历史命令建议；没有建议返回 false
+/// 接受选中的历史命令建议；它已不是当前候选时返回 false
 #[frb(sync)]
-pub fn term_accept_suggestion(id: u32) -> bool {
-    session(id).is_some_and(|session| session.accept_suggestion())
+pub fn term_accept_suggestion(id: u32, command: String) -> bool {
+    session(id).is_some_and(|session| session.accept_suggestion(&command))
 }
 
 #[frb(sync)]

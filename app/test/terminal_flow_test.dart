@@ -162,23 +162,35 @@ void main() {
       app.dispose();
     });
 
-    testWidgets('历史命令建议：回车记下，输入前缀时弹出，→ 补全', (tester) async {
+    testWidgets('历史命令建议：回车记下，输入前缀时列出，↑↓ 选择后回车 / → 补全', (tester) async {
       final app = await boot(tester);
       final session = app.activeSession!;
+      int count(String line) => screen(session).split('\n').where((row) => row == line).length;
 
-      tester.testTextInput.enterText('echo history-marker');
-      await waitFor(tester, () => screen(session).contains(r'$ echo history-marker'), what: '命令回显');
-      await press(tester, LogicalKeyboardKey.enter);
-      await waitFor(tester, () => screen(session).split('\n').contains('history-marker'), what: 'echo 输出');
+      for (final word in ['history-marker', 'history-other']) {
+        tester.testTextInput.enterText('echo $word');
+        await waitFor(tester, () => screen(session).contains('\$ echo $word'), what: '命令回显');
+        await press(tester, LogicalKeyboardKey.enter);
+        await waitFor(tester, () => count(word) == 1, what: 'echo 输出');
+      }
 
       tester.testTextInput.enterText('echo hist');
       await waitFor(tester, () => find.text('→').evaluate().isNotEmpty, what: '建议弹框');
-      expect(session.frame!.suggestion, 'echo history-marker');
-      await press(tester, LogicalKeyboardKey.arrowRight);
-      await waitFor(tester, () => r'$ echo history-marker'.allMatches(screen(session)).length == 2, what: '补全到命令行');
+      expect(session.frame!.suggestions, ['echo history-other', 'echo history-marker']);
+      // ↓↓ 选中第二项，回车只补全不执行，再回车才执行
+      await press(tester, LogicalKeyboardKey.arrowDown);
+      await press(tester, LogicalKeyboardKey.arrowDown);
+      await press(tester, LogicalKeyboardKey.enter);
+      await waitFor(tester, () => count(r'$ echo history-marker') == 2, what: '回车补全选中项');
       expect(find.text('→'), findsNothing);
       await press(tester, LogicalKeyboardKey.enter);
-      await waitFor(tester, () => screen(session).split('\n').where((line) => line == 'history-marker').length == 2, what: '补全后执行');
+      await waitFor(tester, () => count('history-marker') == 2, what: '补全后执行');
+
+      // 没选中时 → 补全第一项（最近用过的）
+      tester.testTextInput.enterText('echo hist');
+      await waitFor(tester, () => find.text('→').evaluate().isNotEmpty, what: '建议弹框');
+      await press(tester, LogicalKeyboardKey.arrowRight);
+      await waitFor(tester, () => count(r'$ echo history-marker') == 3, what: '→ 补全第一项');
 
       await tester.pumpWidget(const SizedBox());
       app.dispose();
