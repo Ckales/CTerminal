@@ -131,6 +131,10 @@ const _english = <String, String>{
   '广播到所有标签页': 'Broadcasting to all tabs',
   '连字': 'Ligatures',
   '字体支持时（如 Fira Code、JetBrains Mono）把 -> != >= 等显示为一个字形': 'Render sequences like -> != >= as single glyphs when the font supports it (e.g. Fira Code, JetBrains Mono)',
+  '输入法': 'Input method',
+  '切换到 CTerminal 时使用英文输入法': 'Use English input when switching to CTerminal',
+  '每次切换到应用时选择已启用的英文输入法': 'Select an enabled English input source whenever you switch to the app',
+  '离开 CTerminal 时恢复之前的输入法': 'Restore the previous input source when leaving CTerminal',
 
   // 终端视图
   '区分大小写': 'Match case',

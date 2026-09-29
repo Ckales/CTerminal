@@ -140,6 +140,10 @@ class _ApplicationPage extends StatelessWidget {
         ConfigSwitch(path: 'application.confirmOnClose', label: '退出时确认', help: '有会话在运行时关闭窗口会先询问'),
         ConfigSwitch(path: 'application.checkForUpdates', label: '自动检查更新', help: '启动时检查 GitHub 上的新版本，每天最多一次'),
       ]),
+      if (Platform.isMacOS)
+        const SettingsSection(title: '输入法', children: [
+          ConfigSwitch(path: 'application.englishInputOnActivate', label: '切换到 CTerminal 时使用英文输入法', help: '离开 CTerminal 时恢复之前的输入法'),
+        ]),
     ]);
   }
 }

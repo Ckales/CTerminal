@@ -332,6 +332,8 @@ pub struct ApplicationSettings {
     pub confirm_on_close: bool,
     /// 启动时检查新版本（每天最多一次）
     pub check_for_updates: bool,
+    /// macOS：进入应用时选择英文输入法，离开时恢复原输入法
+    pub english_input_on_activate: bool,
 }
 
 impl Default for ApplicationSettings {
@@ -343,6 +345,7 @@ impl Default for ApplicationSettings {
             enable_welcome_tab: true,
             confirm_on_close: true,
             check_for_updates: true,
+            english_input_on_activate: true,
         }
     }
 }
@@ -720,6 +723,9 @@ mod tests {
         assert_eq!(config.terminal.scrollback_lines, 25000);
         assert_eq!(config.hotkeys["copy"], ["⌘-X"]);
         assert!(config.hotkeys.contains_key("split-right"));
+        assert!(config.application.english_input_on_activate);
+        let disabled = parse(r#"{"application":{"englishInputOnActivate":false}}"#).unwrap();
+        assert!(!disabled.application.english_input_on_activate);
     }
 
     #[test]

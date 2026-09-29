@@ -8,6 +8,9 @@ import FlutterMacOS
 class MainFlutterWindow: NSWindow, NSWindowDelegate {
   private var channel: FlutterMethodChannel?
   private var allowClose = false
+  private var englishInputOnActivate = false
+  private var inputSourceBeforeActivation: TISInputSource?
+  private var didSelectEnglishInput = false
   /// Dart 在拖动越过阈值后才调 startDrag，系统拖动要拿最初的 mouseDown 才能让窗口跟住鼠标
   private var lastMouseDown: NSEvent?
 
@@ -33,6 +36,18 @@ class MainFlutterWindow: NSWindow, NSWindowDelegate {
     // 不可移动的窗口在显示器拔掉 / 重排时系统不会帮忙挪回来，窗口完全落在屏幕外时自己居中
     NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main) { [weak self] _ in
       if let self = self, self.screen == nil { self.center() }
+    }
+    NotificationCenter.default.addObserver(forName: NSApplication.willBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
+      self?.captureInputSource()
+    }
+    NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
+      self?.selectEnglishInputSource()
+    }
+    NotificationCenter.default.addObserver(forName: NSApplication.willResignActiveNotification, object: nil, queue: .main) { [weak self] _ in
+      self?.restoreInputSource()
+    }
+    NotificationCenter.default.addObserver(forName: NSApplication.willTerminateNotification, object: nil, queue: .main) { [weak self] _ in
+      self?.restoreInputSource()
     }
     isOpaque = false
     backgroundColor = .clear
@@ -77,6 +92,14 @@ class MainFlutterWindow: NSWindow, NSWindowDelegate {
         result(nil)
       case "setGlobalHotkey":
         GlobalHotkey.shared.register(call.arguments as? [String: Any]) { [weak self] in self?.toggleVisibility() }
+        result(nil)
+      case "setEnglishInputOnActivate":
+        self.englishInputOnActivate = call.arguments as? Bool == true
+        if self.englishInputOnActivate {
+          if NSApp.isActive { self.selectEnglishInputSource() }
+        } else {
+          self.restoreInputSource()
+        }
         result(nil)
       case "pickFiles":
         // ZMODEM 上传（远端 rz 在等）、选私钥：多选文件，取消返回空列表
@@ -153,6 +176,37 @@ class MainFlutterWindow: NSWindow, NSWindowDelegate {
 
   func windowDidExitFullScreen(_ notification: Notification) {
     channel?.invokeMethod("fullScreenChanged", arguments: false)
+  }
+
+  private func captureInputSource() {
+    guard englishInputOnActivate, inputSourceBeforeActivation == nil else { return }
+    inputSourceBeforeActivation = TISCopyCurrentKeyboardInputSource()?.takeRetainedValue()
+  }
+
+  private func selectEnglishInputSource() {
+    guard englishInputOnActivate, !didSelectEnglishInput else { return }
+    captureInputSource()
+    guard inputSourceBeforeActivation != nil, let source = TISCopyInputSourceForLanguage("en" as CFString)?.takeRetainedValue() else {
+      inputSourceBeforeActivation = nil
+      return
+    }
+    let status = TISSelectInputSource(source)
+    if status == noErr {
+      didSelectEnglishInput = true
+    } else {
+      inputSourceBeforeActivation = nil
+      NSLog("选择英文输入法失败：%d", status)
+    }
+  }
+
+  private func restoreInputSource() {
+    defer {
+      inputSourceBeforeActivation = nil
+      didSelectEnglishInput = false
+    }
+    guard didSelectEnglishInput, let source = inputSourceBeforeActivation else { return }
+    let status = TISSelectInputSource(source)
+    if status != noErr { NSLog("恢复原输入法失败：%d", status) }
   }
 }
 

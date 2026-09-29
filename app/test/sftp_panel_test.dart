@@ -65,7 +65,7 @@ void main() {
 
   testWidgets('列表、进入目录、下载进度、拖放上传', (tester) async {
     // 面板只用到 AppState 的拖放登记，给最小配置即可
-    final app = AppState(config: {'hotkeys': <String, dynamic>{}});
+    final app = AppState(config: {'hotkeys': <String, dynamic>{}, 'application': {'englishInputOnActivate': true}});
     final session = TerminalSession(profile: {'id': 's', 'name': 'web', 'type': 'ssh', 'options': <String, dynamic>{}});
     await tester.binding.setSurfaceSize(const Size(600, 500));
     await tester.pumpWidget(AppScope(

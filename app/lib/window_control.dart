@@ -41,6 +41,10 @@ abstract final class WindowControl {
         : {'key': hotkey.key, 'meta': hotkey.meta, 'ctrl': hotkey.ctrl, 'alt': hotkey.alt, 'shift': hotkey.shift});
   }
 
+  static void setEnglishInputOnActivate(bool enabled) {
+    if (_mac) _send('setEnglishInputOnActivate', enabled);
+  }
+
   /// 调用前调用方已完成确认和状态保存
   static Future<void> close() async {
     if (_mac) {

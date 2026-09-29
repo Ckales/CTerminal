@@ -141,6 +141,7 @@ class AppState extends ChangeNotifier {
     });
     _hotkeys = map;
     _applyGlobalHotkey();
+    _applyEnglishInputOnActivate();
     colorSchemes = List<Map<String, dynamic>>.from(jsonDecode(rust.colorSchemes()) as List);
   }
 
@@ -155,6 +156,15 @@ class AppState extends ChangeNotifier {
     _globalHotkeyApplied = true;
     _globalHotkey = next;
     WindowControl.setGlobalHotkey(next);
+  }
+
+  bool? _englishInputOnActivate;
+
+  void _applyEnglishInputOnActivate() {
+    final enabled = application['englishInputOnActivate'] == true;
+    if (_englishInputOnActivate == enabled) return;
+    _englishInputOnActivate = enabled;
+    WindowControl.setEnglishInputOnActivate(enabled);
   }
 
   Future<void> reloadProfiles() async {
