@@ -447,11 +447,9 @@ fn default_highlight_rules() -> Vec<HighlightRule> {
         // ls -l / syslog 里的「Mar  4」和 date 输出的星期；月份要带日期，免得正文里的 May 被染色
         rule(r"\b(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) +[0-9]{1,2}\b|\b(Mon|Tue|Wed|Thu|Fri|Sat|Sun)\b", false, 10),
         rule(r"\b(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\b", false, 5),
-        rule(r#""[^"\n]*""#, false, 11),
-        // 命令行选项；regex 不支持后顾，前面的空白一起匹配进来，空白换前景色看不出来
-        rule(r"(^|\s)--?[A-Za-z][\w-]*", false, 3),
+        rule(r#""[^"\n]*""#, false, 2),
         // 数字放最后：IP、时间、UUID 里的数字归前面的规则。带单位的大小 / 时长整体算一个数
-        rule(r"\b[0-9]+(\.[0-9]+)?([KMGTP]i?B?|[kmgt]b?|ms|s|h|d)?\b%?", false, 13),
+        rule(r"\b[0-9]+(\.[0-9]+)?([KMGTP]i?B?|[kmgt]b?|ms|s|h|d)?\b%?", false, 4),
     ]
 }
 
