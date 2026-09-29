@@ -1,6 +1,6 @@
 [package]
 name = "cterm-core"
-version = "1.0.2"
+version = "1.0.3"
 description = "Terminal engine, connections and config for CTerminal"
 authors = ["Ckales"]
 license = "MIT"

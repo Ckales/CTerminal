@@ -1,5 +1,5 @@
 #!/bin/sh
-# 打包 macOS 发布件：签名 →（有凭据时）公证 + 装订 → DMG（带 /Applications 链接）。
+# 打包 macOS：签名 app → 创建并签名 DMG →（有凭据时）公证 + 装订 DMG。
 # 用法：sh app/tool/package_macos.sh <已构建的 CTerminal.app> <输出目录>
 # 输入的 .app 不会被修改：先复制到临时目录再签名。
 #
@@ -44,7 +44,7 @@ sign() {
 }
 
 if [ -z "${MACOS_SIGN_IDENTITY:-}" ]; then
-    echo "警告：未设置 MACOS_SIGN_IDENTITY，使用 ad-hoc 签名。产物只适合本机测试，其他机器上会被 Gatekeeper 拦截。" >&2
+    echo "提示：未设置 MACOS_SIGN_IDENTITY，使用 ad-hoc 签名且不做公证。其他 Mac 首次打开时 Gatekeeper 可能阻止启动，用户可在系统安全设置中手动允许。" >&2
 fi
 
 # 由内向外签：先嵌入的 dylib 和 framework（Rust 静态库链接在 cterminal_rust.framework 里），最后签整个 app
@@ -76,18 +76,24 @@ if [ -n "${APPLE_ID:-}" ] && [ -n "${APPLE_TEAM_ID:-}" ] && [ -n "${APPLE_APP_PA
     HAS_APPLE_ID=true
 fi
 
+ln -s /Applications "$STAGE/Applications"
+DMG="$OUT_DIR/$NAME-$VERSION-macos.dmg"
+hdiutil create -volname "$NAME" -srcfolder "$STAGE" -fs HFS+ -format UDZO -ov "$DMG" >/dev/null
+if [ -n "${MACOS_SIGN_IDENTITY:-}" ]; then
+    codesign --force --timestamp --sign "$MACOS_SIGN_IDENTITY" "$DMG"
+fi
+
 if [ "$HAS_API_KEY" = false ] && [ "$HAS_APPLE_ID" = false ]; then
     echo "未配置公证凭据，跳过公证。" >&2
 elif [ -z "${MACOS_SIGN_IDENTITY:-}" ]; then
-    echo "有公证凭据但没有 Developer ID 签名，ad-hoc 签名无法公证，跳过公证。" >&2
+    echo "有公证凭据但没有 Developer ID 签名，ad-hoc 签名无法公证。" >&2
+    exit 1
 else
     if [ "$HAS_API_KEY" = false ]; then
         unset APPLE_API_KEY_ID
     fi
-    echo "提交公证（通常需要几分钟）…"
-    ZIP="$WORK/$NAME.zip"
-    ditto -c -k --keepParent "$APP" "$ZIP"
-    RESULT=$(notary submit "$ZIP" --wait --output-format json)
+    echo "提交最终 DMG 公证（通常需要几分钟）…"
+    RESULT=$(notary submit "$DMG" --wait --output-format json)
     STATUS=$(printf '%s' "$RESULT" | plutil -extract status raw -o - -)
     if [ "$STATUS" != "Accepted" ]; then
         SUBMISSION=$(printf '%s' "$RESULT" | plutil -extract id raw -o - -)
@@ -95,15 +101,9 @@ else
         notary log "$SUBMISSION" >&2 || true
         exit 1
     fi
-    xcrun stapler staple "$APP"
-    xcrun stapler validate "$APP"
+    xcrun stapler staple "$DMG"
+    xcrun stapler validate "$DMG"
 fi
 
-ln -s /Applications "$STAGE/Applications"
-DMG="$OUT_DIR/$NAME-$VERSION-macos.dmg"
-hdiutil create -volname "$NAME" -srcfolder "$STAGE" -fs HFS+ -format UDZO -ov "$DMG" >/dev/null
-if [ -n "${MACOS_SIGN_IDENTITY:-}" ]; then
-    codesign --force --timestamp --sign "$MACOS_SIGN_IDENTITY" "$DMG"
-fi
 hdiutil verify "$DMG" >/dev/null
 echo "$DMG"

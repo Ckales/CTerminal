@@ -1,7 +1,7 @@
 name: Release
 
 # 推 v* 标签时构建 macOS DMG 与 Windows zip，并创建 GitHub Release 草稿。
-# 签名 / 公证用到的 Secrets 见 README「发布」；缺失时仍产出未签名的包。
+# 可选配置 Developer ID 签名 / Apple 公证 Secrets；缺失时仍生成 ad-hoc 签名、未公证的 DMG。
 on:
   push:
     tags: ['v*']

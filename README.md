@@ -5,7 +5,7 @@
 
 CTerminal 是一款跨平台桌面终端，不基于 Electron：界面用 Flutter 自绘，终端内核、连接和配置全部由 Rust 实现，两者通过 flutter_rust_bridge 连接。
 
-> 早期版本。macOS 已可日常使用；Windows 版尚未经过真机测试。暂未提供签名和公证的安装包。
+> 早期版本。macOS 已可日常使用；Windows 版尚未经过真机测试。macOS 安装包未使用 Developer ID 签名或 Apple 公证，首次打开时 Gatekeeper 可能显示安全提示。
 
 ## 功能
 
@@ -122,14 +122,14 @@ app/test/            Dart 测试
 
 ## 发布
 
-推送与版本号一致的标签（如 `v1.0.2`，须与 `app/pubspec.yaml`、`crates/cterm-core/Cargo.toml` 一致，否则流水线失败）后，`.github/workflows/release.yml` 会构建 macOS 通用版 DMG 与 Windows zip，并创建 GitHub Release 草稿。本地打包：
+推送与版本号一致的标签（如 `v1.0.3`，须与 `app/pubspec.yaml`、`crates/cterm-core/Cargo.toml` 一致，否则流水线失败）后，`.github/workflows/release.yml` 会构建 macOS 通用版 DMG 与 Windows zip，并创建 GitHub Release 草稿。本地打包：
 
 ```bash
 cd app && flutter build macos --release && cd ..
 sh app/tool/package_macos.sh app/build/macos/Build/Products/Release/CTerminal.app dist
 ```
 
-签名与公证需要在仓库的 GitHub Secrets 中配置下列项。缺少时流水线仍会产出 ad-hoc 签名、未公证的包：
+DMG 打包本身免费，正式发布也不强制配置付费的 Developer ID 证书或 Apple 公证凭据。没有凭据时流水线仍会生成 ad-hoc 签名、未公证的 DMG；其他 Mac 首次打开时 Gatekeeper 可能提示无法验证开发者，用户需要在系统安全设置中手动允许。若以后要提供无此提示的安装体验，可在 GitHub Secrets 配置下列可选凭据：
 
 | Secret | 用途 |
 | --- | --- |

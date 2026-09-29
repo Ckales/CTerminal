@@ -241,7 +241,7 @@ mod tests {
         assert_eq!(hits("2026-09-28T21:41:47.123"), ["2026-09-28T21:41:47.123"]);
         assert_eq!(hits("login failed: 连接超时"), ["failed", "超时"]);
         assert!(hits("std::io::Result Vec::new password information May I").is_empty());
-        assert_eq!(hits("ls -la --color=auto a-b"), [" -la --color"]);
+        assert!(hits("ls -la --color=auto a-b").is_empty(), "默认规则不单独高亮命令行选项");
         assert_eq!(hits(r#"say "quoted 42" 50% 10.5GB 30s 1st v2 3f2b"#), [r#""quoted 42""#, "50%", "10.5GB", "30s"]);
     }
 
@@ -251,7 +251,7 @@ mod tests {
         let highlights = compile(&rules, true);
         let expected = [
             ("d", 5), ("r", 4), ("w", 3), ("x", 1), ("r", 4), ("-", 10), ("s", 1), ("r", 4), ("-", 10), ("x", 1),
-            ("4", 13), ("4096", 13), ("Mar  4", 10), ("2026", 13),
+            ("4", 4), ("4096", 4), ("Mar  4", 10), ("2026", 4),
         ];
         let expected: Vec<(String, u8)> = expected.iter().map(|(text, color)| (text.to_string(), *color)).collect();
         assert_eq!(segments("drwxr-sr-x  4 root root 4096 Mar  4  2026 yangminguhi/", &highlights), expected);
@@ -259,10 +259,10 @@ mod tests {
         // 普通文件的类型位 '-' 是黄绿；ACL 标记 '.' 不改色；紧挨别的字符的 rwx 不算权限串
         let file = segments("-rw-r--r--. 1 x-rwxrwxrwx", &highlights);
         assert_eq!(file[..4], [("-".to_string(), 10), ("r".to_string(), 4), ("w".to_string(), 3), ("-".to_string(), 10)]);
-        assert_eq!(file.last(), Some(&("1".to_string(), 13)));
+        assert_eq!(file.last(), Some(&("1".to_string(), 4)));
 
-        // 关掉后权限串整段归选项规则
+        // 关闭权限串着色后，只剩普通数字规则命中数字，不再套命令行选项颜色
         let off = compile(&rules, false);
-        assert_eq!(segments("-rw-r--r-- 1", &off)[0], ("-rw-r--r--".to_string(), 3));
+        assert_eq!(segments("-rw-r--r-- 1", &off), [("1".to_string(), 4)]);
     }
 }
