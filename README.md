@@ -122,7 +122,7 @@ app/test/            Dart 测试
 
 ## 发布
 
-推送与版本号一致的标签（如 `v0.1.0`，须与 `app/pubspec.yaml`、`crates/cterm-core/Cargo.toml` 一致，否则流水线失败）后，`.github/workflows/release.yml` 会构建 macOS 通用版 DMG 与 Windows zip，并创建 GitHub Release 草稿。本地打包：
+推送与版本号一致的标签（如 `v1.0.2`，须与 `app/pubspec.yaml`、`crates/cterm-core/Cargo.toml` 一致，否则流水线失败）后，`.github/workflows/release.yml` 会构建 macOS 通用版 DMG 与 Windows zip，并创建 GitHub Release 草稿。本地打包：
 
 ```bash
 cd app && flutter build macos --release && cd ..
