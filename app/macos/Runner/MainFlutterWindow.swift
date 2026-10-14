@@ -13,6 +13,9 @@ class MainFlutterWindow: NSWindow, NSWindowDelegate {
   private var didSelectEnglishInput = false
   /// Dart 在拖动越过阈值后才调 startDrag，系统拖动要拿最初的 mouseDown 才能让窗口跟住鼠标
   private var lastMouseDown: NSEvent?
+  /// 显示器重配是按屏幕逐个 begin/end 的，全部结束才把 isMovable 关回去
+  private var screenReconfigurations = 0
+  private var screenCallbackInfo: UnsafeMutableRawPointer?
 
   override func sendEvent(_ event: NSEvent) {
     if event.type == .leftMouseDown { lastMouseDown = event }
@@ -33,7 +36,11 @@ class MainFlutterWindow: NSWindow, NSWindowDelegate {
     titlebarAppearsTransparent = true
     styleMask.insert(.fullSizeContentView)
     isMovable = false
-    // 不可移动的窗口在显示器拔掉 / 重排时系统不会帮忙挪回来，窗口完全落在屏幕外时自己居中
+    // 不可移动的窗口，显示器拔掉 / 重排时系统不迁移：全屏空间会被拆掉（可移动的窗口不会），
+    // 完全落在屏幕外时也不会被挪回来。重配开始前临时允许移动，结束后再关；落在屏幕外则居中
+    let screenInfo = Unmanaged.passUnretained(self).toOpaque()
+    screenCallbackInfo = screenInfo
+    CGDisplayRegisterReconfigurationCallback(MainFlutterWindow.screenReconfigurationCallback, screenInfo)
     NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main) { [weak self] _ in
       if let self = self, self.screen == nil { self.center() }
     }
@@ -170,12 +177,50 @@ class MainFlutterWindow: NSWindow, NSWindowDelegate {
     return false
   }
 
+  func windowWillEnterFullScreen(_ notification: Notification) {
+    // 带 frame 自动保存的窗口，显示器重配时系统会把 frame 设回普通尺寸，全屏直接被退出
+    setFrameAutosaveName("")
+  }
+
   func windowDidEnterFullScreen(_ notification: Notification) {
     channel?.invokeMethod("fullScreenChanged", arguments: true)
   }
 
   func windowDidExitFullScreen(_ notification: Notification) {
+    // 重新挂上名字会立刻套用旧 frame，盖住系统刚恢复的窗口大小
+    let restored = frame
+    setFrameAutosaveName("CTerminalMain")
+    setFrame(restored, display: false)
     channel?.invokeMethod("fullScreenChanged", arguments: false)
+  }
+
+  deinit {
+    if let screenCallbackInfo = screenCallbackInfo {
+      CGDisplayRemoveReconfigurationCallback(MainFlutterWindow.screenReconfigurationCallback, screenCallbackInfo)
+    }
+  }
+
+  private static let screenReconfigurationCallback: CGDisplayReconfigurationCallBack = { _, flags, userInfo in
+    guard let userInfo = userInfo else { return }
+    let window = Unmanaged<MainFlutterWindow>.fromOpaque(userInfo).takeUnretainedValue()
+    if Thread.isMainThread {
+      window.allowMoveDuringScreenChange(flags)
+    } else {
+      DispatchQueue.main.sync { window.allowMoveDuringScreenChange(flags) }
+    }
+  }
+
+  /// 重配期间临时允许移动，窗口服务器才会把全屏空间迁到还在的屏幕上
+  private func allowMoveDuringScreenChange(_ flags: CGDisplayChangeSummaryFlags) {
+    if flags.contains(.beginConfigurationFlag) {
+      screenReconfigurations += 1
+      isMovable = true
+      return
+    }
+    screenReconfigurations = max(0, screenReconfigurations - 1)
+    if screenReconfigurations == 0 && NSEvent.pressedMouseButtons & 1 == 0 {
+      isMovable = false
+    }
   }
 
   private func captureInputSource() {
