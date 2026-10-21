@@ -4,6 +4,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
 
 import '../app_state.dart';
 import '../i18n.dart';
@@ -18,6 +19,14 @@ class _Conversation {
   String context = '';
   String? error;
   bool pending = false;
+  String partial = '';
+  String status = '';
+  String? presetId;
+  int? requestId;
+  StreamSubscription<ai.AiChatEvent>? subscription;
+  List<Map<String, String>>? requestMessages;
+  String requestContext = '';
+  String requestPreset = '';
 }
 
 /// The dock owns conversations so changing its position or hiding it keeps drafts.
@@ -36,54 +45,146 @@ class _AiWorkspaceState extends State<AiWorkspace> {
   double _rightWidth = 380;
   double _bottomHeight = 310;
 
-  Future<void> _send(_Conversation chat, {bool retry = false}) async {
-    if (chat.pending || (!retry && chat.draft.trim().isEmpty)) return;
+  Timer? _renderTimer;
+
+  void _refresh() {
+    _renderTimer ??= Timer(const Duration(milliseconds: 32), () {
+      _renderTimer = null;
+      if (mounted) setState(() {});
+    });
+  }
+
+  void _finish(_Conversation chat, int id, String kind, String text) {
+    if (!mounted || chat.requestId != id) return;
+    final subscription = chat.subscription;
     setState(() {
-      if (!retry) {
+      chat.pending = false;
+      chat.requestId = null;
+      chat.subscription = null;
+      if (kind == 'done' && chat.partial.trim().isNotEmpty) {
+        chat.messages.add({'role': 'assistant', 'content': chat.partial});
+        chat.partial = '';
+        chat.status = text;
+      } else if (kind == 'cancelled') {
+        chat.status = tr('已停止');
+      } else {
+        chat.error = text.isNotEmpty ? text : tr('AI 没有返回文本，请检查模型或重试。');
+      }
+    });
+    if (subscription != null) unawaited(subscription.cancel());
+  }
+
+  void _stop(_Conversation chat) {
+    final id = chat.requestId;
+    if (id == null) return;
+    final subscription = chat.subscription;
+    setState(() {
+      chat.requestId = null;
+      chat.subscription = null;
+      chat.pending = false;
+      chat.status = tr('已停止');
+    });
+    ai.aiChatCancel(requestId: id);
+    if (subscription != null) unawaited(subscription.cancel());
+  }
+
+  void _send(_Conversation chat, {bool retry = false}) {
+    if (chat.pending || (!retry && chat.draft.trim().isEmpty)) return;
+    if (retry && chat.requestMessages == null) return;
+    final app = AppScope.read(context);
+    final defaultPreset = (app.config['ai'] as Map?)?['activePreset'] as String? ?? 'general';
+    setState(() {
+      if (retry) {
+        chat.messages
+          ..clear()
+          ..addAll(chat.requestMessages!.map(Map<String, String>.of));
+      } else {
+        if (chat.partial.isNotEmpty) {
+          chat.messages.add({'role': 'assistant', 'content': chat.partial});
+        }
         chat.messages.add({'role': 'user', 'content': chat.draft.trim()});
         chat.draft = '';
+        chat.requestMessages = chat.messages.map(Map<String, String>.of).toList();
       }
+      chat.requestPreset = chat.presetId ?? defaultPreset;
+      chat.requestContext = chat.context;
+      chat.partial = '';
       chat.error = null;
+      chat.status = '';
       chat.pending = true;
     });
     try {
-      final reply = await ai.aiChat(
-        messagesJson: jsonEncode(chat.messages),
-        context: chat.context,
-      );
-      if (!mounted) return;
-      setState(
-        () => chat.messages.add({'role': 'assistant', 'content': reply}),
-      );
+      final id = ai.aiChatPrepare();
+      chat.requestId = id;
+      chat.subscription = ai
+          .aiChatStream(
+            requestId: id,
+            presetId: chat.requestPreset,
+            messagesJson: jsonEncode(chat.requestMessages),
+            context: chat.requestContext,
+          )
+          .listen(
+            (event) {
+              if (!mounted || chat.requestId != id) return;
+              if (event.kind == 'delta') {
+                chat.partial += event.text;
+                _refresh();
+              } else {
+                _finish(chat, id, event.kind, event.text);
+              }
+            },
+            onError: (Object error) {
+              _finish(chat, id, 'error', '$error');
+            },
+            onDone: () {
+              if (chat.requestId == id) {
+                _finish(chat, id, 'error', tr('连接已中断，回复尚未完成。'));
+              }
+            },
+          );
     } catch (error) {
-      if (mounted) setState(() => chat.error = '$error');
-    } finally {
-      if (mounted) setState(() => chat.pending = false);
+      final id = chat.requestId;
+      if (id != null) ai.aiChatCancel(requestId: id);
+      setState(() {
+        chat.requestId = null;
+        chat.pending = false;
+        chat.error = '$error';
+      });
     }
+  }
+
+  @override
+  void dispose() {
+    _renderTimer?.cancel();
+    for (final chat in _conversations.values) {
+      final id = chat.requestId;
+      if (id != null) ai.aiChatCancel(requestId: id);
+      unawaited(chat.subscription?.cancel() ?? Future<void>.value());
+    }
+    super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
     final app = AppScope.of(context);
-    final live = app.tabs
-        .whereType<TerminalTab>()
-        .expand((tab) => tab.sessions)
-        .toSet();
-    _conversations.removeWhere(
-      (session, chat) =>
-          session != null && !live.contains(session) && !chat.pending,
-    );
+    final live = app.tabs.whereType<TerminalTab>().expand((tab) => tab.sessions).toSet();
+    final closed = _conversations.keys.where((session) => session != null && !live.contains(session)).toList();
+    for (final session in closed) {
+      final chat = _conversations.remove(session)!;
+      final id = chat.requestId;
+      chat.requestId = null;
+      if (id != null) ai.aiChatCancel(requestId: id);
+      unawaited(chat.subscription?.cancel() ?? Future<void>.value());
+    }
     final content = KeyedSubtree(key: _contentKey, child: widget.child);
     if (!app.aiVisible) return content;
     final session = app.activeSession;
-    final chat = _conversations.putIfAbsent(session, _Conversation.new);
+    final chat = _conversations.putIfAbsent(session, () => _Conversation()
+      ..presetId = ((app.config['ai'] as Map?)?['activePreset'] as String? ?? 'general'));
     final right = (app.config['ai'] as Map?)?['panelPosition'] != 'bottom';
     return LayoutBuilder(
       builder: (context, constraints) {
-        final width = _rightWidth.clamp(
-          280.0,
-          (constraints.maxWidth * .65).clamp(280.0, 600.0),
-        );
+        final width = _rightWidth.clamp(280.0, (constraints.maxWidth * .65).clamp(280.0, 600.0));
         final maxHeight = math.min(650.0, constraints.maxHeight * .75);
         final minHeight = math.min(240.0, maxHeight);
         final height = _bottomHeight.clamp(minHeight, maxHeight);
@@ -91,30 +192,23 @@ class _AiWorkspaceState extends State<AiWorkspace> {
         final vertical = !right || constraints.maxWidth < 650;
         final panel = _AiPanel(
           key: _panelKey,
-        dockAtBottom: vertical,
+          dockAtBottom: vertical,
           chat: chat,
           session: session,
           onChanged: () => setState(() {}),
           onSend: () => _send(chat),
           onRetry: () => _send(chat, retry: true),
+          onStop: () => _stop(chat),
         );
         final divider = MouseRegion(
-          cursor: vertical
-              ? SystemMouseCursors.resizeUpDown
-              : SystemMouseCursors.resizeLeftRight,
+          cursor: vertical ? SystemMouseCursors.resizeUpDown : SystemMouseCursors.resizeLeftRight,
           child: GestureDetector(
             behavior: HitTestBehavior.opaque,
             onPanUpdate: (event) => setState(() {
               if (vertical) {
-                _bottomHeight = (height - event.delta.dy).clamp(
-                  minHeight,
-                  maxHeight,
-                );
+                _bottomHeight = (height - event.delta.dy).clamp(minHeight, maxHeight);
               } else {
-                _rightWidth = (width - event.delta.dx).clamp(
-                  280.0,
-                  constraints.maxWidth * .65,
-                );
+                _rightWidth = (width - event.delta.dx).clamp(280.0, constraints.maxWidth * .65);
               }
             }),
             child: Container(
@@ -155,6 +249,7 @@ class _AiPanel extends StatefulWidget {
     required this.onChanged,
     required this.onSend,
     required this.onRetry,
+    required this.onStop,
   });
   final _Conversation chat;
   final bool dockAtBottom;
@@ -162,6 +257,7 @@ class _AiPanel extends StatefulWidget {
   final VoidCallback onChanged;
   final VoidCallback onSend;
   final VoidCallback onRetry;
+  final VoidCallback onStop;
 
   @override
   State<_AiPanel> createState() => _AiPanelState();
@@ -172,6 +268,7 @@ class _AiPanelState extends State<_AiPanel> {
   final _input = TextEditingController();
   final _focus = FocusNode();
   final _scroll = ScrollController();
+  bool _followOutput = true;
 
   @override
   void initState() {
@@ -198,7 +295,8 @@ class _AiPanelState extends State<_AiPanel> {
         selection: TextSelection.collapsed(offset: widget.chat.draft.length),
       );
     }
-    if (widget.chat.pending || oldWidget.chat != widget.chat) {
+    if (oldWidget.chat != widget.chat) _followOutput = true;
+    if (_followOutput) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (_scroll.hasClients) {
           _scroll.jumpTo(_scroll.position.maxScrollExtent);
@@ -221,8 +319,7 @@ class _AiPanelState extends State<_AiPanel> {
     if (session == null || !session.started) return;
     final text = terminal.termSelectionText(id: session.id) ?? '';
     if (text.isEmpty) {
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text(tr('请先在终端中选中要发送的文字'))));
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(tr('请先在终端中选中要发送的文字'))));
       return;
     }
     widget.chat.context = text;
@@ -235,14 +332,25 @@ class _AiPanelState extends State<_AiPanel> {
     final app = AppScope.of(context);
     final chat = widget.chat;
     final config = app.config['ai'] as Map? ?? {};
-    final configured =
-        (config['baseUrl'] as String? ?? '').isNotEmpty &&
-        (config['model'] as String? ?? '').isNotEmpty;
+    final configured = (config['baseUrl'] as String? ?? '').isNotEmpty && (config['model'] as String? ?? '').isNotEmpty;
     return Focus(
       onKeyEvent: (_, event) {
+        if (event is KeyDownEvent && event.logicalKey == LogicalKeyboardKey.escape) {
+          if (chat.pending) {
+            widget.onStop();
+          } else {
+            app.toggleAi();
+          }
+          return KeyEventResult.handled;
+        }
         if (event is KeyDownEvent &&
-            event.logicalKey == LogicalKeyboardKey.escape) {
-          app.toggleAi();
+            event.logicalKey == LogicalKeyboardKey.enter &&
+            (HardwareKeyboard.instance.isControlPressed || HardwareKeyboard.instance.isMetaPressed) &&
+            configured &&
+            !chat.pending &&
+            chat.draft.trim().isNotEmpty &&
+            _input.value.composing.isCollapsed) {
+          widget.onSend();
           return KeyEventResult.handled;
         }
         return KeyEventResult.ignored;
@@ -260,38 +368,19 @@ class _AiPanelState extends State<_AiPanel> {
               ),
               child: Row(
                 children: [
-                  Icon(
-                    Icons.auto_awesome_outlined,
-                    size: 16,
-                    color: colors.accent,
-                  ),
+                  Icon(Icons.auto_awesome_outlined, size: 16, color: colors.accent),
                   const SizedBox(width: 8),
-                  Text(
-                    tr('AI 助手'),
-                    style: const TextStyle(
-                      fontSize: 13,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
+                  Text(tr('AI 助手'), style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
                   const Spacer(),
-                  _button(
-                    Icons.tune,
-                    tr('AI 设置'),
-                    () => app.openSettings('ai'),
-                  ),
+                  _button(Icons.tune, tr('AI 设置'), () => app.openSettings('ai')),
                   PopupMenuButton<String>(
                     tooltip: tr('面板位置'),
-                    icon: Icon(
-                      Icons.space_dashboard_outlined,
-                      size: 16,
-                      color: colors.textDim,
-                    ),
+                    icon: Icon(Icons.space_dashboard_outlined, size: 16, color: colors.textDim),
                     iconSize: 16,
                     padding: EdgeInsets.zero,
                     constraints: const BoxConstraints(minWidth: 120),
                     onSelected: (value) => app.updateConfig((config) {
-                      (config['ai'] as Map<String, dynamic>)['panelPosition'] =
-                          value;
+                      (config['ai'] as Map<String, dynamic>)['panelPosition'] = value;
                     }),
                     itemBuilder: (_) => [
                       PopupMenuItem(value: 'right', child: Text(tr('右侧'))),
@@ -307,6 +396,9 @@ class _AiPanelState extends State<_AiPanel> {
                             chat.messages.clear();
                             chat.error = null;
                             chat.context = '';
+                            chat.partial = '';
+                            chat.status = '';
+                            chat.requestMessages = null;
                             widget.onChanged();
                           },
                   ),
@@ -319,9 +411,7 @@ class _AiPanelState extends State<_AiPanel> {
               child: Row(
                 children: [
                   Icon(
-                    widget.session?.profileType == 'ssh'
-                        ? Icons.dns_outlined
-                        : Icons.terminal,
+                    widget.session?.profileType == 'ssh' ? Icons.dns_outlined : Icons.terminal,
                     size: 13,
                     color: colors.textDim,
                   ),
@@ -345,96 +435,90 @@ class _AiPanelState extends State<_AiPanel> {
                 ],
               ),
             ),
+            _presetSelector(config, chat),
             Expanded(
               child: chat.messages.isEmpty
                   ? _empty(configured)
-                  : ListView(
-                      controller: _scroll,
-                      padding: const EdgeInsets.fromLTRB(14, 6, 14, 12),
-                      children: [
-                        for (final message in chat.messages)
-                          _Message(message: message),
-                        if (chat.pending)
-                          Padding(
-                            padding: const EdgeInsets.symmetric(vertical: 12),
-                            child: Row(
-                              children: [
-                                const SizedBox(
-                                  width: 12,
-                                  height: 12,
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 1.5,
-                                  ),
-                                ),
-                                const SizedBox(width: 8),
-                                Text(
-                                  tr('正在思考…'),
-                                  style: TextStyle(
-                                    fontSize: 12,
-                                    color: colors.textDim,
-                                  ),
-                                ),
-                              ],
+                  : NotificationListener<UserScrollNotification>(
+                      onNotification: (notification) {
+                        _followOutput = notification.metrics.extentAfter < 72;
+                        return false;
+                      },
+                      child: ListView(
+                        controller: _scroll,
+                        padding: const EdgeInsets.fromLTRB(14, 6, 14, 12),
+                        children: [
+                          for (final message in chat.messages) _Message(message: message),
+                          if (chat.partial.isNotEmpty)
+                            _Message(message: {'role': 'assistant', 'content': chat.partial}),
+                          if (chat.status.isNotEmpty)
+                            Padding(
+                              padding: const EdgeInsets.only(bottom: 8),
+                              child: Text(chat.status, style: TextStyle(fontSize: 11, color: colors.textDim)),
                             ),
-                          ),
-                        if (chat.error != null)
-                          Container(
-                            padding: const EdgeInsets.all(10),
-                            decoration: BoxDecoration(
-                              color: colors.danger.withValues(alpha: .08),
-                              borderRadius: BorderRadius.circular(6),
-                            ),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                SelectableText(
-                                  chat.error!,
-                                  style: TextStyle(
-                                    fontSize: 12,
-                                    color: colors.danger,
+                          if (chat.pending)
+                            Padding(
+                              padding: const EdgeInsets.symmetric(vertical: 12),
+                              child: Row(
+                                children: [
+                                  const SizedBox(
+                                    width: 12,
+                                    height: 12,
+                                    child: CircularProgressIndicator(strokeWidth: 1.5),
                                   ),
-                                ),
-                                TextButton(
-                                  onPressed: chat.pending
-                                      ? null
-                                      : widget.onRetry,
-                                  child: Text(tr('重试')),
-                                ),
-                              ],
+                                  const SizedBox(width: 8),
+                                  Text(
+                                    tr(chat.partial.isEmpty ? '正在思考…' : '正在生成…'),
+                                    style: TextStyle(fontSize: 12, color: colors.textDim),
+                                  ),
+                                ],
+                              ),
                             ),
-                          ),
-                      ],
+                          if (chat.error != null)
+                            Container(
+                              padding: const EdgeInsets.all(10),
+                              decoration: BoxDecoration(
+                                color: colors.danger.withValues(alpha: .08),
+                                borderRadius: BorderRadius.circular(6),
+                              ),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  SelectableText(chat.error!, style: TextStyle(fontSize: 12, color: colors.danger)),
+                                  TextButton(onPressed: chat.pending ? null : widget.onRetry, child: Text(tr(chat.presetId != chat.requestPreset ? '按当前预设重新生成' : '重试'))),
+                                ],
+                              ),
+                            ),
+                          if (!chat.pending && chat.error == null && chat.requestMessages != null)
+                            Align(
+                              alignment: Alignment.centerLeft,
+                              child: TextButton.icon(
+                                onPressed: widget.onRetry,
+                                icon: const Icon(Icons.refresh, size: 14),
+                                label: Text(tr('重新生成')),
+                              ),
+                            ),
+                        ],
+                      ),
                     ),
             ),
             if (chat.context.isNotEmpty)
               Container(
                 margin: const EdgeInsets.fromLTRB(12, 0, 12, 8),
                 padding: const EdgeInsets.fromLTRB(10, 4, 0, 4),
-                decoration: BoxDecoration(
-                  color: colors.surfaceRaised,
-                  borderRadius: BorderRadius.circular(6),
-                ),
+                decoration: BoxDecoration(color: colors.surfaceRaised, borderRadius: BorderRadius.circular(6)),
                 child: Row(
                   children: [
                     Expanded(
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Text(
-                            tr('附加的终端选区'),
-                            style: TextStyle(
-                              fontSize: 10,
-                              color: colors.accent,
-                            ),
-                          ),
+                          Text(tr('附加的终端选区'), style: TextStyle(fontSize: 10, color: colors.accent)),
                           Text(
                             chat.context,
                             maxLines: 2,
                             overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              fontSize: 11,
-                              color: colors.textDim,
-                            ),
+                            style: TextStyle(fontSize: 11, color: colors.textDim),
                           ),
                         ],
                       ),
@@ -461,7 +545,7 @@ class _AiPanelState extends State<_AiPanel> {
                     focusNode: _focus,
                     minLines: 2,
                     maxLines: 4,
-                    enabled: !chat.pending,
+                    enabled: true,
                     style: const TextStyle(fontSize: 13),
                     decoration: InputDecoration(
                       hintText: tr('描述你想完成的操作…'),
@@ -482,24 +566,26 @@ class _AiPanelState extends State<_AiPanel> {
                         _button(
                           Icons.attach_file,
                           tr('附加终端选区'),
-                          widget.session?.started == true && !chat.pending
-                              ? _attach
-                              : null,
+                          widget.session?.started == true && !chat.pending ? _attach : null,
                         ),
-                        Expanded(child: Text(
-                          tr('仅发送输入和附加内容'),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(fontSize: 10, color: colors.textDim),
-                        )),
+                        Expanded(
+                          child: Text(
+                            tr('Ctrl/⌘ Enter 发送 · 手动附加终端内容'),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(fontSize: 10, color: colors.textDim),
+                          ),
+                        ),
                         IconButton.filled(
-                          tooltip: tr('发送'),
+                          tooltip: tr(chat.pending ? '停止生成' : '发送'),
                           visualDensity: VisualDensity.compact,
-                          icon: const Icon(Icons.arrow_upward, size: 17),
-                          onPressed:
-                              configured &&
-                                  !chat.pending &&
-                                  chat.draft.trim().isNotEmpty
+                          icon: Icon(chat.pending ? Icons.stop : Icons.arrow_upward, size: 17),
+                          onPressed: chat.pending
+                              ? () {
+                                  widget.onStop();
+                                  _focus.requestFocus();
+                                }
+                              : configured && chat.draft.trim().isNotEmpty
                               ? widget.onSend
                               : null,
                         ),
@@ -515,8 +601,101 @@ class _AiPanelState extends State<_AiPanel> {
     );
   }
 
+  Widget _presetSelector(Map config, _Conversation chat) {
+    final colors = AppTheme.of(context);
+    final presets = (config['promptPresets'] as List?) ?? jsonDecode(ai.aiPresetsDefaults()) as List;
+    if (presets.isEmpty) return const SizedBox.shrink();
+    var selected = chat.presetId ?? config['activePreset'] as String? ?? 'general';
+    if (!presets.any((preset) => preset['id'] == selected)) {
+      selected = presets.first['id'] as String;
+      chat.presetId = selected;
+    }
+    final current = presets.firstWhere((preset) => preset['id'] == selected) as Map;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+      child: Row(
+        children: [
+          Icon(Icons.person_outline, size: 14, color: colors.textDim),
+          const SizedBox(width: 6),
+          Expanded(
+            child: PopupMenuButton<String>(
+              tooltip: tr('对话预设'),
+              enabled: !chat.pending,
+              initialValue: selected,
+              onSelected: (value) {
+                chat.presetId = value;
+                widget.onChanged();
+              },
+              itemBuilder: (_) => [
+                for (final preset in presets)
+                  CheckedPopupMenuItem(
+                    value: preset['id'] as String,
+                    checked: selected == preset['id'],
+                    child: Text(tr(preset['name'] as String)),
+                  ),
+              ],
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      tr(current['name'] as String),
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(fontSize: 11, color: colors.textDim),
+                    ),
+                  ),
+                  Icon(Icons.expand_more, size: 14, color: colors.textDim),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _empty(bool configured) {
     final colors = AppTheme.of(context);
+    if (widget.dockAtBottom) {
+      return SingleChildScrollView(
+        padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 12),
+        child: Wrap(
+          spacing: 24,
+          runSpacing: 10,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          children: [
+            SizedBox(
+              width: 320,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    tr('从一句话开始'),
+                    style: TextStyle(fontSize: 17, fontWeight: FontWeight.w600, color: colors.text),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(tr('编写命令、解释报错，或一起分析终端输出。'), style: TextStyle(fontSize: 12, color: colors.textDim)),
+                ],
+              ),
+            ),
+            if (!configured)
+              OutlinedButton.icon(
+                onPressed: () => AppScope.read(context).openSettings('ai'),
+                icon: const Icon(Icons.tune, size: 14),
+                label: Text(tr('配置 AI 服务')),
+              ),
+            for (final text in ['帮我编写命令', '解释这段报错', '分析命令输出'])
+              ActionChip(
+                label: Text(tr(text), style: const TextStyle(fontSize: 11)),
+                onPressed: () {
+                  widget.chat.draft = tr(text);
+                  widget.onChanged();
+                  _focus.requestFocus();
+                },
+              ),
+          ],
+        ),
+      );
+    }
     return SingleChildScrollView(
       padding: const EdgeInsets.fromLTRB(22, 18, 22, 16),
       child: Column(
@@ -524,17 +703,10 @@ class _AiPanelState extends State<_AiPanel> {
         children: [
           Text(
             tr('从一句话开始'),
-            style: TextStyle(
-              fontSize: 18,
-              color: colors.text,
-              fontWeight: FontWeight.w600,
-            ),
+            style: TextStyle(fontSize: 18, color: colors.text, fontWeight: FontWeight.w600),
           ),
           const SizedBox(height: 8),
-          Text(
-            tr('编写命令、解释报错，或一起分析终端输出。'),
-            style: TextStyle(fontSize: 12, color: colors.textDim, height: 1.6),
-          ),
+          Text(tr('编写命令、解释报错，或一起分析终端输出。'), style: TextStyle(fontSize: 12, color: colors.textDim, height: 1.6)),
           const SizedBox(height: 16),
           Wrap(
             spacing: 6,
@@ -553,10 +725,7 @@ class _AiPanelState extends State<_AiPanel> {
           ),
           if (!configured) ...[
             const SizedBox(height: 20),
-            Text(
-              tr('连接你的 AI 服务后即可开始。'),
-              style: TextStyle(fontSize: 12, color: colors.textDim),
-            ),
+            Text(tr('连接你的 AI 服务后即可开始。'), style: TextStyle(fontSize: 12, color: colors.textDim)),
             const SizedBox(height: 8),
             OutlinedButton.icon(
               onPressed: () => AppScope.read(context).openSettings('ai'),
@@ -569,16 +738,15 @@ class _AiPanelState extends State<_AiPanel> {
     );
   }
 
-  Widget _button(IconData icon, String tooltip, VoidCallback? onPressed) =>
-      IconButton(
-        tooltip: tooltip,
-        onPressed: onPressed,
-        icon: Icon(icon, size: 16),
-        color: AppTheme.of(context).textDim,
-        visualDensity: VisualDensity.compact,
-        constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
-        padding: const EdgeInsets.all(5),
-      );
+  Widget _button(IconData icon, String tooltip, VoidCallback? onPressed) => IconButton(
+    tooltip: tooltip,
+    onPressed: onPressed,
+    icon: Icon(icon, size: 16),
+    color: AppTheme.of(context).textDim,
+    visualDensity: VisualDensity.compact,
+    constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+    padding: const EdgeInsets.all(5),
+  );
 }
 
 class _Message extends StatelessWidget {
@@ -594,33 +762,34 @@ class _Message extends StatelessWidget {
     return Container(
       margin: const EdgeInsets.only(bottom: 14),
       padding: EdgeInsets.all(user ? 10 : 0),
-      decoration: user
-          ? BoxDecoration(
-              color: colors.surfaceRaised,
-              borderRadius: BorderRadius.circular(6),
-            )
-          : null,
+      decoration: user ? BoxDecoration(color: colors.surfaceRaised, borderRadius: BorderRadius.circular(6)) : null,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Padding(
             padding: const EdgeInsets.only(bottom: 6),
-            child: Text(
-              user ? tr('你') : tr('AI 助手'),
-              style: TextStyle(fontSize: 10, color: colors.textDim),
-            ),
+            child: Text(user ? tr('你') : tr('AI 助手'), style: TextStyle(fontSize: 10, color: colors.textDim)),
           ),
           for (var index = 0; index < blocks.length; index++)
             if (blocks[index].trim().isNotEmpty)
               if (index.isOdd)
                 _code(context, blocks[index])
+              else if (user)
+                SelectableText(blocks[index].trim(), style: TextStyle(fontSize: 13, color: colors.text, height: 1.6))
               else
-                SelectableText(
-                  blocks[index].trim(),
-                  style: TextStyle(
-                    fontSize: 13,
-                    color: colors.text,
-                    height: 1.6,
+                MarkdownBody(
+                  data: blocks[index].trim(),
+                  selectable: true,
+                  imageBuilder: (uri, title, alt) => Text(alt ?? uri.toString()),
+                  styleSheet: MarkdownStyleSheet.fromTheme(Theme.of(context)).copyWith(
+                    p: TextStyle(fontSize: 13, color: colors.text, height: 1.6),
+                    code: TextStyle(
+                      fontSize: 12,
+                      fontFamily: 'monospace',
+                      color: colors.text,
+                      backgroundColor: colors.chrome,
+                    ),
+                    blockSpacing: 8,
                   ),
                 ),
         ],
@@ -652,8 +821,7 @@ class _Message extends StatelessWidget {
                 onPressed: () async {
                   await Clipboard.setData(ClipboardData(text: code));
                   if (context.mounted) {
-                    ScaffoldMessenger.of(context)
-                        .showSnackBar(SnackBar(content: Text(tr('已复制'))));
+                    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(tr('已复制'))));
                   }
                 },
                 icon: const Icon(Icons.copy, size: 12),
@@ -663,12 +831,7 @@ class _Message extends StatelessWidget {
           ),
           SelectableText(
             code,
-            style: TextStyle(
-              fontSize: 12,
-              fontFamily: 'Menlo',
-              color: colors.text,
-              height: 1.5,
-            ),
+            style: TextStyle(fontSize: 12, fontFamily: 'Menlo', color: colors.text, height: 1.5),
           ),
         ],
       ),

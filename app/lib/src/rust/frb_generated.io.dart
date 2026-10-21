@@ -29,6 +29,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   AnyhowException dco_decode_AnyhowException(dynamic raw);
 
   @protected
+  RustStreamSink<AiChatEvent> dco_decode_StreamSink_ai_chat_event_Sse(
+    dynamic raw,
+  );
+
+  @protected
   RustStreamSink<SftpProgress> dco_decode_StreamSink_sftp_progress_Sse(
     dynamic raw,
   );
@@ -38,6 +43,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   String dco_decode_String(dynamic raw);
+
+  @protected
+  AiChatEvent dco_decode_ai_chat_event(dynamic raw);
 
   @protected
   bool dco_decode_bool(dynamic raw);
@@ -124,6 +132,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   AnyhowException sse_decode_AnyhowException(SseDeserializer deserializer);
 
   @protected
+  RustStreamSink<AiChatEvent> sse_decode_StreamSink_ai_chat_event_Sse(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   RustStreamSink<SftpProgress> sse_decode_StreamSink_sftp_progress_Sse(
     SseDeserializer deserializer,
   );
@@ -135,6 +148,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   String sse_decode_String(SseDeserializer deserializer);
+
+  @protected
+  AiChatEvent sse_decode_ai_chat_event(SseDeserializer deserializer);
 
   @protected
   bool sse_decode_bool(SseDeserializer deserializer);
@@ -230,6 +246,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_StreamSink_ai_chat_event_Sse(
+    RustStreamSink<AiChatEvent> self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_StreamSink_sftp_progress_Sse(
     RustStreamSink<SftpProgress> self,
     SseSerializer serializer,
@@ -243,6 +265,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_String(String self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_ai_chat_event(AiChatEvent self, SseSerializer serializer);
 
   @protected
   void sse_encode_bool(bool self, SseSerializer serializer);

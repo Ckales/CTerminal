@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::frame::Palette;
+use crate::i18n::tr;
 use crate::local::LocalOptions;
 use crate::shells;
 
@@ -62,6 +63,9 @@ pub struct AiSettings {
     pub base_url: String,
     pub model: String,
     pub panel_position: AiPanelPosition,
+    pub system_prompt: String,
+    pub prompt_presets: Vec<AiPromptPreset>,
+    pub active_preset: String,
 }
 
 impl Default for AiSettings {
@@ -70,8 +74,50 @@ impl Default for AiSettings {
             base_url: String::new(),
             model: String::new(),
             panel_position: AiPanelPosition::Right,
+            system_prompt: String::new(),
+            prompt_presets: default_ai_prompt_presets(),
+            active_preset: "general".into(),
         }
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct AiPromptPreset {
+    pub id: String,
+    pub name: String,
+    pub prompt: String,
+}
+
+impl Default for AiPromptPreset {
+    fn default() -> Self {
+        Self { id: String::new(), name: String::new(), prompt: String::new() }
+    }
+}
+
+pub fn default_ai_prompt_presets() -> Vec<AiPromptPreset> {
+    vec![
+        AiPromptPreset {
+            id: "general".into(),
+            name: "通用终端助手".into(),
+            prompt: "你是终端中的通用助手。结合对话和提供的终端上下文回答问题，先给清晰结论，再给必要步骤。回复使用用户当前的语言。".into(),
+        },
+        AiPromptPreset {
+            id: "command".into(),
+            name: "命令编写".into(),
+            prompt: "根据用户目标编写适用于其 shell 的命令。说明命令用途和关键参数；涉及删除、覆盖或系统修改时，先明确说明影响并提供安全预览方式。回复使用用户当前的语言。".into(),
+        },
+        AiPromptPreset {
+            id: "diagnose".into(),
+            name: "报错排查".into(),
+            prompt: "根据报错和终端上下文定位最可能的原因，区分已知事实与推测，并给出按风险从低到高的排查步骤。不要假定你可以执行命令。回复使用用户当前的语言。".into(),
+        },
+        AiPromptPreset {
+            id: "explain".into(),
+            name: "命令解释".into(),
+            prompt: "解释用户给出的命令或终端输出，按组成部分说明作用、输入输出和可能影响；指出危险操作。回复使用用户当前的语言。".into(),
+        },
+    ]
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -621,6 +667,7 @@ pub fn parse(json: &str) -> Result<Config, String> {
         return Err(trf!("配置文件由更新版本的 CTerminal 创建（配置版本 {version}），请升级后再打开", version = version));
     }
     let mut config: Config = serde_json::from_value(migrated).map_err(|err| trf!("配置文件内容错误：{err}", err = err))?;
+    validate_ai_settings(&config.ai)?;
     for (action, keys) in default_hotkeys() {
         config.hotkeys.entry(action).or_insert(keys);
     }
@@ -642,6 +689,7 @@ pub fn load_from(path: &Path) -> Result<Config, String> {
 
 /// 先写临时文件再改名，写到一半崩溃也不会留下半个配置
 pub fn save_to(path: &Path, config: &Config) -> Result<(), String> {
+    validate_ai_settings(&config.ai)?;
     let mut stored = config.clone();
     stored.profiles.retain(|profile| !profile.is_builtin);
     let json = serde_json::to_string_pretty(&stored).map_err(|err| err.to_string())?;
@@ -658,6 +706,31 @@ pub fn save_to(path: &Path, config: &Config) -> Result<(), String> {
     let temp = path.with_extension("json.tmp");
     fs::write(&temp, json).map_err(|err| trf!("写入配置失败：{err}", err = err))?;
     fs::rename(&temp, path).map_err(|err| trf!("写入配置失败：{err}", err = err))
+}
+
+fn validate_ai_settings(settings: &AiSettings) -> Result<(), String> {
+    if settings.prompt_presets.is_empty() {
+        return Err(tr("至少需要一个 AI 提示预设"));
+    }
+    let mut ids = std::collections::HashSet::new();
+    for preset in &settings.prompt_presets {
+        if preset.id.trim().is_empty() {
+            return Err(tr("AI 提示预设 ID 不能为空"));
+        }
+        if preset.name.trim().is_empty() {
+            return Err(tr("AI 提示预设名称不能为空"));
+        }
+        if preset.prompt.trim().is_empty() {
+            return Err(tr("AI 提示预设内容不能为空"));
+        }
+        if !ids.insert(preset.id.trim()) {
+            return Err(trf!("AI 提示预设 ID 重复：{id}", id = preset.id));
+        }
+    }
+    if !ids.contains(settings.active_preset.trim()) {
+        return Err(tr("当前 AI 提示预设不存在，请重新选择"));
+    }
+    Ok(())
 }
 
 pub fn load() -> Result<Config, String> {
@@ -767,6 +840,8 @@ mod tests {
         let config = parse(r#"{"version":1,"terminal":{"fontSize":17}}"#).unwrap();
         assert_eq!(config.ai, AiSettings::default());
         assert_eq!(config.ai.panel_position, AiPanelPosition::Right);
+        assert_eq!(config.ai.active_preset, "general");
+        assert_eq!(config.ai.prompt_presets.iter().map(|preset| preset.id.as_str()).collect::<Vec<_>>(), ["general", "command", "diagnose", "explain"]);
         let explicit = parse(r#"{"ai":{"baseUrl":"https://api.example.com/v1","model":"demo","panelPosition":"bottom"}}"#).unwrap();
         assert_eq!(explicit.ai.base_url, "https://api.example.com/v1");
         assert_eq!(explicit.ai.model, "demo");
@@ -775,6 +850,30 @@ mod tests {
         let serialized = serde_json::to_value(&explicit).unwrap();
         assert_eq!(serialized["ai"]["panelPosition"], "bottom");
         assert!(!serialized["ai"].as_object().unwrap().contains_key("apiKey"));
+
+        let customized = parse(r#"{"ai":{"systemPrompt":"Use concise examples","activePreset":"diagnose","promptPresets":[{"id":"diagnose","name":"My diagnosis","prompt":"Inspect the error carefully"}]}}"#).unwrap();
+        let saved = serde_json::to_string(&customized).unwrap();
+        let loaded = parse(&saved).unwrap();
+        assert_eq!(loaded.ai.system_prompt, "Use concise examples");
+        assert_eq!(loaded.ai.active_preset, "diagnose");
+        assert_eq!(loaded.ai.prompt_presets[0].prompt, "Inspect the error carefully");
+
+        for invalid in [
+            r#"{"ai":{"promptPresets":[]}}"#,
+            r#"{"ai":{"promptPresets":[{"id":" ","name":"X","prompt":"p"}],"activePreset":" "}}"#,
+            r#"{"ai":{"promptPresets":[{"id":"x","name":"X","prompt":"p"},{"id":"x","name":"Y","prompt":"q"}],"activePreset":"x"}}"#,
+            r#"{"ai":{"promptPresets":[{"id":"x","name":"X","prompt":"p"}],"activePreset":"missing"}}"#,
+            r#"{"ai":{"promptPresets":[{"id":"x","name":" ","prompt":"p"}],"activePreset":"x"}}"#,
+            r#"{"ai":{"promptPresets":[{"id":"x","name":"X","prompt":"  "}],"activePreset":"x"}}"#,
+        ] {
+            assert!(parse(invalid).is_err(), "expected invalid config: {invalid}");
+        }
+
+        let path = std::env::temp_dir().join(format!("cterm-invalid-ai-config-{}.json", std::process::id()));
+        let mut invalid_save = Config::default();
+        invalid_save.ai.prompt_presets.clear();
+        assert!(save_to(&path, &invalid_save).is_err());
+        assert!(!path.exists());
     }
 
     #[test]

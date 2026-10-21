@@ -7,6 +7,26 @@ import '../frb_generated.dart';
 
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
+String aiPresetsDefaults() =>
+    RustLib.instance.api.crateApiAiAiPresetsDefaults();
+
+int aiChatPrepare() => RustLib.instance.api.crateApiAiAiChatPrepare();
+
+void aiChatCancel({required int requestId}) =>
+    RustLib.instance.api.crateApiAiAiChatCancel(requestId: requestId);
+
+Stream<AiChatEvent> aiChatStream({
+  required int requestId,
+  required String presetId,
+  required String messagesJson,
+  required String context,
+}) => RustLib.instance.api.crateApiAiAiChatStream(
+  requestId: requestId,
+  presetId: presetId,
+  messagesJson: messagesJson,
+  context: context,
+);
+
 bool aiStatus() => RustLib.instance.api.crateApiAiAiStatus();
 
 Future<void> aiSetApiKey({required String value}) =>
@@ -19,3 +39,21 @@ Future<String> aiChat({
   messagesJson: messagesJson,
   context: context,
 );
+
+class AiChatEvent {
+  final String kind;
+  final String text;
+
+  const AiChatEvent({required this.kind, required this.text});
+
+  @override
+  int get hashCode => kind.hashCode ^ text.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is AiChatEvent &&
+          runtimeType == other.runtimeType &&
+          kind == other.kind &&
+          text == other.text;
+}

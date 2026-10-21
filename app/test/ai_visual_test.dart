@@ -5,6 +5,7 @@ library;
 
 import 'dart:io';
 import 'dart:ui' as ui;
+import 'dart:convert';
 
 import 'package:cterminal/app_state.dart';
 import 'package:cterminal/src/rust/frb_generated.dart';
@@ -26,6 +27,11 @@ class _FakeApi extends Fake implements RustLibApi {
 
   @override
   bool crateApiAiAiStatus() => false;
+
+  @override
+  String crateApiAiAiPresetsDefaults() => jsonEncode([
+    {'id': 'general', 'name': '通用', 'prompt': ''},
+  ]);
 }
 
 Future<void> _loadFont(String family, List<String> paths) async {
