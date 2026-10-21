@@ -13,6 +13,7 @@ import 'package:cterminal/src/rust/api/settings.dart' as rust;
 import 'package:cterminal/src/rust/api/terminal.dart';
 import 'package:cterminal/src/rust/frb_generated.dart';
 import 'package:cterminal/terminal/terminal_session.dart';
+import 'package:cterminal/terminal/terminal_painter.dart';
 import 'package:cterminal/ui/app_shell.dart';
 import 'package:cterminal/ui/settings/profiles_page.dart';
 import 'package:cterminal/window_control.dart';
@@ -119,6 +120,43 @@ void main() {
   }
 
   group('真实内核', () {
+    testWidgets('vim 中闪烁熄灭后快速按上下方向键，光标立即恢复且持续可见', (tester) async {
+      final app = await boot(tester);
+      final session = app.activeSession!;
+      TerminalPainter painter() => tester
+          .widgetList<CustomPaint>(find.byType(CustomPaint))
+          .map((widget) => widget.painter)
+          .whereType<TerminalPainter>()
+          .single;
+
+      try {
+        tester.testTextInput.enterText('vim -Nu NONE -i NONE -n -c \'call setline(1, repeat(["cursor-regression"], 60))\' -c \'normal! 20G\'');
+        await press(tester, LogicalKeyboardKey.enter);
+        await waitFor(tester, () => session.frame!.altScreen && screen(session).contains('cursor-regression'), what: '本地 vim 启动');
+        expect(painter().focused, isTrue);
+        expect(session.frame!.cursorVisible, isTrue);
+        await tester.pump(const Duration(milliseconds: 530));
+        expect(painter().cursorOn, isFalse, reason: '先进入光标闪烁的熄灭阶段');
+
+        for (var i = 0; i < 12; i++) {
+          await press(tester, i.isEven ? LogicalKeyboardKey.arrowDown : LogicalKeyboardKey.arrowUp);
+          session.refresh();
+          await tester.pump();
+          expect(painter().cursorOn, isTrue, reason: '按键后即使只有终端帧刷新，也应立即画出光标');
+          await tester.pump(const Duration(milliseconds: 40));
+          expect(painter().cursorOn, isTrue);
+        }
+
+        await tester.pump(const Duration(milliseconds: 490));
+        expect(painter().cursorOn, isFalse, reason: '停止输入后恢复正常闪烁');
+        await tester.pump(const Duration(milliseconds: 530));
+        expect(painter().cursorOn, isTrue);
+      } finally {
+        await tester.pumpWidget(const SizedBox());
+        app.dispose();
+      }
+    });
+
     testWidgets('输入命令、看到输出、Ctrl-C 与退格', (tester) async {
       final app = await boot(tester);
       final session = app.activeSession!;

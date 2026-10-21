@@ -239,7 +239,8 @@ class _TerminalViewState extends State<TerminalView> with DeltaTextInputClient {
 
   void _restartBlink() {
     _blink?.cancel();
-    _cursorOn = true;
+    // 帧通知只触发重绘，光标从熄灭恢复时还要更新绘制器持有的状态。
+    if (!_cursorOn) setState(() => _cursorOn = true);
     final app = _app;
     if (app != null && app.terminal['cursorBlink'] != true) return;
     _blink = Timer.periodic(const Duration(milliseconds: 530), (_) {
