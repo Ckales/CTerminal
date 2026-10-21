@@ -3,6 +3,7 @@
 #[macro_use]
 pub mod i18n;
 pub mod config;
+pub mod ai;
 pub mod connect;
 pub mod frame;
 pub mod highlight;

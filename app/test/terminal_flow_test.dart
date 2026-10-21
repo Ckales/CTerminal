@@ -182,6 +182,50 @@ void main() {
       app.dispose();
     });
 
+    testWidgets('AI 草稿和粘贴不进入 shell，切换停靠位置保持终端会话', (tester) async {
+      final app = await boot(tester);
+      final session = app.activeSession!;
+      final id = session.id;
+      String? clipboard;
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(SystemChannels.platform, (call) async {
+        if (call.method == 'Clipboard.setData') clipboard = (call.arguments as Map)['text'] as String;
+        if (call.method == 'Clipboard.getData') return {'text': clipboard};
+        return null;
+      });
+      await tester.tap(find.byTooltip(tr('AI 助手')));
+      await tester.pump();
+      await tester.pump();
+      final input = find.byKey(const ValueKey('ai-input'));
+      await tester.enterText(input, 'AI-only-draft');
+      await tester.pump();
+      await press(tester, LogicalKeyboardKey.enter);
+      expect(screen(session), isNot(contains('AI-only-draft')));
+      await Clipboard.setData(const ClipboardData(text: 'AI-only-paste'));
+      await press(tester, LogicalKeyboardKey.keyA, meta: true);
+      await press(tester, LogicalKeyboardKey.keyV, meta: true);
+      await tester.pump();
+      expect(tester.widget<TextField>(input).controller!.text, 'AI-only-paste');
+      expect(screen(session), isNot(contains('AI-only-paste')));
+      await tester.runAsync(() => app.updateConfig((config) {
+        (config['ai'] as Map<String, dynamic>)['panelPosition'] = 'bottom';
+      }));
+      await tester.pump();
+      await tester.pump();
+      expect(session.id, id);
+      expect(tester.widget<TextField>(input).controller!.text, 'AI-only-paste');
+      tester.testTextInput.enterText('AI-after-layout');
+      await tester.pump();
+      expect(tester.widget<TextField>(input).controller!.text, 'AI-after-layout');
+      expect(screen(session), isNot(contains('AI-after-layout')));
+      await press(tester, LogicalKeyboardKey.escape);
+      expect(app.aiVisible, isFalse);
+      tester.testTextInput.enterText('echo terminal-still-connected');
+      await press(tester, LogicalKeyboardKey.enter);
+      await waitFor(tester, () => screen(session).split('\n').contains('terminal-still-connected'));
+      await tester.pumpWidget(const SizedBox());
+      app.dispose();
+    }, variant: TargetPlatformVariant.only(TargetPlatform.macOS));
+
     testWidgets('输入法组合：组合中不发送，确认后只发送最终文字', (tester) async {
       final app = await boot(tester);
       final session = app.activeSession!;

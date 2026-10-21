@@ -49,7 +49,7 @@ class AppTabBar extends StatelessWidget {
               ),
             ),
           ),
-          Row(children: [...buttons, const Spacer(), const UpdateButton(height: height), _settingsButton(app)]),
+          Row(children: [...buttons, const Spacer(), const UpdateButton(height: height), _aiButton(app), _settingsButton(app)]),
         ]),
       );
     }
@@ -87,6 +87,7 @@ class AppTabBar extends StatelessWidget {
         ...buttons,
         Expanded(flex: flexible ? 0 : 1, child: _DragArea(child: const SizedBox(height: height))),
         const UpdateButton(height: height),
+        _aiButton(app),
         _settingsButton(app),
         const SizedBox(width: 4),
       ]),
@@ -94,6 +95,8 @@ class AppTabBar extends StatelessWidget {
   }
 
   static const _pinnedWidth = 52.0;
+
+  Widget _aiButton(AppState app) => _ChromeButton(icon: app.aiVisible ? Icons.chat_bubble : Icons.chat_bubble_outline, tooltip: tr('AI 助手'), onTap: app.toggleAi);
 
   Widget _settingsButton(AppState app) => _ChromeButton(icon: CupertinoIcons.gear, tooltip: tr('设置'), onTap: () => app.openSettings());
 }

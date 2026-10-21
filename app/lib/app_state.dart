@@ -86,6 +86,14 @@ class AppState extends ChangeNotifier {
   Map<Hotkey, String> _hotkeys = {};
   double fontSizeDelta = 0;
   bool fullScreen = false;
+  bool aiVisible = false;
+  /// Registered by the AI composer so terminal rebuilds preserve its keyboard focus.
+  FocusNode? aiInputFocus;
+
+  void toggleAi() {
+    aiVisible = !aiVisible;
+    notifyListeners();
+  }
   /// 选择器 / 面板等弹层由 shell 注册
   Future<void> Function()? showProfileSelector;
   Future<void> Function()? showCommandPalette;

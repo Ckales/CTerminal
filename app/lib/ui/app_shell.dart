@@ -13,6 +13,7 @@ import '../window_control.dart';
 import 'profile_icons.dart';
 import 'selector.dart';
 import 'settings/settings_page.dart';
+import 'ai_workspace.dart';
 import 'split_view.dart';
 import 'tab_bar.dart';
 import 'welcome_page.dart';
@@ -255,7 +256,7 @@ class _Workspace extends StatelessWidget {
     final active = app.activeTab;
 
     // 所有标签页常驻（Offstage），切换时会话、滚动位置都保留
-    final content = Stack(children: [
+    final content = AiWorkspace(child: Stack(children: [
       for (final tab in app.tabs)
         Positioned.fill(
           key: ValueKey(tab.key),
@@ -271,7 +272,7 @@ class _Workspace extends StatelessWidget {
             ),
           ),
         ),
-    ]);
+    ]));
 
     final tabBar = AppTabBar(vertical: vertical);
     Widget body;
@@ -305,6 +306,9 @@ class _Workspace extends StatelessWidget {
       body: Focus(
           onKeyEvent: (node, event) {
             if (event is KeyUpEvent) return KeyEventResult.ignored;
+            if (FocusManager.instance.primaryFocus?.context?.findAncestorWidgetOfExactType<EditableText>() != null) {
+              return KeyEventResult.ignored;
+            }
             final action = app.actionFor(event);
             if (action == null) return KeyEventResult.ignored;
             // 设置页里的文本框自己处理复制粘贴

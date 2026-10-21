@@ -2,6 +2,7 @@
 //! 读取接口不暴露给界面层：界面只能写入、查询是否存在、删除。
 
 const SERVICE: &str = "CTerminal";
+pub(crate) const AI_API_KEY: &str = "ai:api_key";
 
 /// 凭据键：`<kind>:<profile id>`，kind 如 password / passphrase:<私钥路径>
 pub fn key(kind: &str, profile_id: &str) -> String {

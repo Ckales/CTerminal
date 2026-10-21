@@ -12,6 +12,7 @@ import '../../update_check.dart';
 import '../../version.dart';
 import '../selector.dart';
 import 'color_schemes_page.dart';
+import 'ai_page.dart';
 import 'highlight_page.dart';
 import 'hotkeys_page.dart';
 import 'profiles_page.dart';
@@ -28,6 +29,7 @@ const _pages = <(String, String, IconData)>[
   ('profiles', '配置和连接', Icons.dns_outlined),
   ('hotkeys', '快捷键', Icons.keyboard_outlined),
   ('ssh', 'SSH', Icons.vpn_key_outlined),
+  ('ai', 'AI助手', Icons.auto_awesome_outlined),
   ('vault', '凭据', Icons.lock_outline),
   ('configFile', '配置文件', Icons.description_outlined),
   ('about', '关于', Icons.info_outline),
@@ -74,6 +76,7 @@ class SettingsPage extends StatelessWidget {
             'profiles' => ProfilesPage(editId: argument, key: ValueKey('profiles:$argument')),
             'hotkeys' => const HotkeysPage(),
             'ssh' => _scroll(const _SshPage()),
+            'ai' => const AiPage(),
             'vault' => const VaultPage(),
             'configFile' => const _ConfigFilePage(),
             'about' => _scroll(const _AboutPage()),

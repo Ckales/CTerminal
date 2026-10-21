@@ -127,6 +127,24 @@ fn english(source: &str) -> Option<&'static str> {
         "本地转发 {bind}:{port} → {target}:{target_port}" => "Local forward {bind}:{port} → {target}:{target_port}",
         "检查更新失败：{err}" => "Update check failed: {err}",
         "检查更新失败：返回内容无法识别" => "Update check failed: unrecognized response",
+        "请先设置 AI API key" => "Set an AI API key first",
+        "请先设置 AI 服务地址" => "Set the AI service URL first",
+        "请先设置 AI 模型" => "Set an AI model first",
+        "AI API key 格式无效" => "The AI API key format is invalid",
+        "AI 请求失败，请检查网络和服务地址" => "AI request failed. Check the network and service URL",
+        "AI 服务返回 HTTP {status}" => "AI service returned HTTP {status}",
+        "读取 AI 响应失败" => "Failed to read the AI response",
+        "AI 响应超过大小限制" => "The AI response exceeds the size limit",
+        "AI 响应格式无法识别" => "The AI response format is not recognized",
+        "AI 响应中没有 assistant 文本" => "The AI response has no assistant text",
+        "对话消息格式无效" => "The chat message format is invalid",
+        "对话消息数量必须为 1 到 {max}" => "The number of chat messages must be between 1 and {max}",
+        "对话消息 role 仅支持 system、user、assistant" => "Chat message roles must be system, user, or assistant",
+        "无法构造 AI 请求" => "Failed to construct the AI request",
+        "AI 请求超过大小限制" => "The AI request exceeds the size limit",
+        "AI 服务地址格式无效" => "The AI service URL is invalid",
+        "AI 服务地址不能包含用户名、密码或查询参数" => "The AI service URL cannot contain user info or query parameters",
+        "AI 服务地址必须使用 HTTPS（HTTP 仅允许本机服务）" => "The AI service URL must use HTTPS (HTTP is allowed only for loopback services)",
         "ZMODEM：对方在等待上传，请选择文件…" => "ZMODEM: the remote side is waiting for an upload, choose files…",
         "ZMODEM 已取消" => "ZMODEM cancelled",
         "ZMODEM 传输失败：{err}" => "ZMODEM transfer failed: {err}",
@@ -157,8 +175,11 @@ mod tests {
     fn templates_and_fallback() {
         set_language("en");
         assert_eq!(crate::trf!("连接 {host}:{port} 超时", host = "example.com", port = 22), "Connection to example.com:22 timed out");
+        assert_eq!(crate::trf!("AI 服务返回 HTTP {status}", status = 503), "AI service returned HTTP 503");
+        assert_eq!(tr("请先设置 AI 模型"), "Set an AI model first");
         assert_eq!(tr("没有翻译的句子"), "没有翻译的句子");
         set_language("zh");
         assert_eq!(crate::trf!("连接 {host}:{port} 超时", host = "example.com", port = 22), "连接 example.com:22 超时");
+        assert_eq!(crate::trf!("AI 服务返回 HTTP {status}", status = 503), "AI 服务返回 HTTP 503");
     }
 }

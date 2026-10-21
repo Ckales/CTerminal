@@ -25,6 +25,7 @@ pub struct Config {
     pub appearance: AppearanceSettings,
     pub application: ApplicationSettings,
     pub ssh: SshSettings,
+    pub ai: AiSettings,
     pub custom_color_schemes: Vec<ColorScheme>,
     /// 关键字高亮，靠前的规则优先
     pub highlight_rules: Vec<HighlightRule>,
@@ -45,11 +46,44 @@ impl Default for Config {
             appearance: AppearanceSettings::default(),
             application: ApplicationSettings::default(),
             ssh: SshSettings::default(),
+            ai: AiSettings::default(),
             custom_color_schemes: Vec::new(),
             highlight_rules: default_highlight_rules(),
             highlight_permissions: true,
             recent_profiles: Vec::new(),
         }
+    }
+}
+
+/// AI 聊天设置。API key 单独存放在系统钥匙串，不进入配置 JSON。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct AiSettings {
+    pub base_url: String,
+    pub model: String,
+    pub panel_position: AiPanelPosition,
+}
+
+impl Default for AiSettings {
+    fn default() -> Self {
+        Self {
+            base_url: String::new(),
+            model: String::new(),
+            panel_position: AiPanelPosition::Right,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum AiPanelPosition {
+    Right,
+    Bottom,
+}
+
+impl Default for AiPanelPosition {
+    fn default() -> Self {
+        Self::Right
     }
 }
 
@@ -726,6 +760,21 @@ mod tests {
         assert!(config.application.english_input_on_activate);
         let disabled = parse(r#"{"application":{"englishInputOnActivate":false}}"#).unwrap();
         assert!(!disabled.application.english_input_on_activate);
+    }
+
+    #[test]
+    fn ai_config_defaults_and_old_config_remains_compatible() {
+        let config = parse(r#"{"version":1,"terminal":{"fontSize":17}}"#).unwrap();
+        assert_eq!(config.ai, AiSettings::default());
+        assert_eq!(config.ai.panel_position, AiPanelPosition::Right);
+        let explicit = parse(r#"{"ai":{"baseUrl":"https://api.example.com/v1","model":"demo","panelPosition":"bottom"}}"#).unwrap();
+        assert_eq!(explicit.ai.base_url, "https://api.example.com/v1");
+        assert_eq!(explicit.ai.model, "demo");
+        assert_eq!(explicit.ai.panel_position, AiPanelPosition::Bottom);
+        assert!(parse(r#"{"ai":{"panelPosition":"left"}}"#).is_err());
+        let serialized = serde_json::to_value(&explicit).unwrap();
+        assert_eq!(serialized["ai"]["panelPosition"], "bottom");
+        assert!(!serialized["ai"].as_object().unwrap().contains_key("apiKey"));
     }
 
     #[test]

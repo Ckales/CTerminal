@@ -184,6 +184,7 @@ class _TerminalViewState extends State<TerminalView> with DeltaTextInputClient {
   void _syncFocus() {
     if (widget.active && !_searchOpen) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (_app?.aiVisible == true && (_app?.aiInputFocus?.hasFocus ?? false)) return;
         if (mounted && widget.active && !_focus.hasFocus && !_searchOpen) _focus.requestFocus();
       });
     }
