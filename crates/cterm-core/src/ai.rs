@@ -1227,7 +1227,7 @@ fn authorization_value(api_key: &str) -> Result<String, String> {
 
 #[cfg(test)]
 mod tests {
-    use std::io::{BufRead, BufReader, Read, Write};
+    use std::io::{BufRead, BufReader, ErrorKind, Read, Write};
     use std::net::{Shutdown, TcpListener};
     use std::sync::mpsc;
     use std::thread;
@@ -1631,8 +1631,7 @@ mod tests {
             write_http_chunk(&mut stream, &first_sse_frame[split..]);
             if wait_for_close {
                 let mut byte = [0; 1];
-                let read = reader.read(&mut byte).unwrap();
-                assert_eq!(read, 0, "client should close the stream after cancellation");
+                assert_client_disconnected(reader.read(&mut byte));
             } else {
                 on_first_frame.recv_timeout(Duration::from_secs(3)).unwrap();
                 write_http_chunk(&mut stream, final_sse_frames);
@@ -1673,14 +1672,36 @@ mod tests {
                 stream.flush().unwrap();
             }
             let mut byte = [0; 1];
-            let read = reader.read(&mut byte).unwrap();
-            assert_eq!(
-                read, 0,
-                "client should close stalled stream after cancellation"
-            );
+            assert_client_disconnected(reader.read(&mut byte));
             let _ = stream.shutdown(Shutdown::Both);
         });
         (format!("http://{address}/v1/chat/completions"), handle)
+    }
+
+    fn assert_client_disconnected(read: std::io::Result<usize>) {
+        // 取消时丢弃响应体可能产生 EOF 或 TCP reset，超时仍须失败。
+        match read {
+            Ok(0) => {}
+            Err(error) if error.kind() == ErrorKind::ConnectionReset => {}
+            result => panic!("client should close the stream promptly, got {result:?}"),
+        }
+    }
+
+    #[test]
+    fn client_disconnect_assertion_accepts_eof_and_connection_reset() {
+        assert_client_disconnected(Ok(0));
+        assert_client_disconnected(Err(ErrorKind::ConnectionReset.into()));
+    }
+
+    #[test]
+    fn client_disconnect_assertion_rejects_data_and_other_read_errors() {
+        assert!(std::panic::catch_unwind(|| assert_client_disconnected(Ok(1))).is_err());
+        for kind in [ErrorKind::TimedOut, ErrorKind::WouldBlock, ErrorKind::Other] {
+            assert!(
+                std::panic::catch_unwind(|| assert_client_disconnected(Err(kind.into()))).is_err(),
+                "read error {kind:?} must not count as a disconnected client"
+            );
+        }
     }
 
     fn write_http_chunk(stream: &mut std::net::TcpStream, bytes: &[u8]) {
