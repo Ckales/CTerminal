@@ -36,7 +36,11 @@ struct CheckRecord {
 /// 立即检查（“关于”页的按钮）
 pub fn check_now() -> Result<UpdateStatus, String> {
     let (latest, url) = fetch_latest()?;
-    save_record(&CheckRecord { checked_at: now(), latest: latest.clone(), url: url.clone() });
+    save_record(&CheckRecord {
+        checked_at: now(),
+        latest: latest.clone(),
+        url: url.clone(),
+    });
     let newer = is_newer(&latest, CURRENT_VERSION);
     Ok(UpdateStatus { latest, url, newer })
 }
@@ -47,7 +51,11 @@ pub fn check_daily() -> Option<UpdateStatus> {
     if now().saturating_sub(record.checked_at) < CHECK_INTERVAL {
         // 用缓存的 tag 重新和当前版本比：升级后提示自然消失
         let newer = is_newer(&record.latest, CURRENT_VERSION);
-        return newer.then_some(UpdateStatus { latest: record.latest, url: record.url, newer });
+        return newer.then_some(UpdateStatus {
+            latest: record.latest,
+            url: record.url,
+            newer,
+        });
     }
     let status = check_now().ok()?;
     status.newer.then_some(status)
@@ -71,9 +79,15 @@ fn fetch_latest() -> Result<(String, String), String> {
         return Ok((String::new(), String::new()));
     }
     if status != 200 {
-        return Err(crate::trf!("检查更新失败：{err}", err = format!("HTTP {status}")));
+        return Err(crate::trf!(
+            "检查更新失败：{err}",
+            err = format!("HTTP {status}")
+        ));
     }
-    let body = response.body_mut().read_to_string().map_err(|err| crate::trf!("检查更新失败：{err}", err = err))?;
+    let body = response
+        .body_mut()
+        .read_to_string()
+        .map_err(|err| crate::trf!("检查更新失败：{err}", err = err))?;
     parse_release(&body)
 }
 
@@ -83,14 +97,19 @@ fn parse_release(body: &str) -> Result<(String, String), String> {
         tag_name: String,
         html_url: String,
     }
-    let release: Release = serde_json::from_str(body).map_err(|_| tr("检查更新失败：返回内容无法识别"))?;
+    let release: Release =
+        serde_json::from_str(body).map_err(|_| tr("检查更新失败：返回内容无法识别"))?;
     Ok((release.tag_name, release.html_url))
 }
 
 /// latest 是否比 current 新。预发布版本（带 -）不提示；无法解析的 tag 视为不新。
 pub fn is_newer(latest: &str, current: &str) -> bool {
-    let Some((latest_numbers, latest_pre)) = parse_version(latest) else { return false };
-    let Some((current_numbers, current_pre)) = parse_version(current) else { return false };
+    let Some((latest_numbers, latest_pre)) = parse_version(latest) else {
+        return false;
+    };
+    let Some((current_numbers, current_pre)) = parse_version(current) else {
+        return false;
+    };
     if latest_pre {
         return false;
     }
@@ -126,7 +145,9 @@ fn record_path() -> PathBuf {
 }
 
 fn load_record() -> CheckRecord {
-    let Ok(text) = std::fs::read_to_string(record_path()) else { return CheckRecord::default() };
+    let Ok(text) = std::fs::read_to_string(record_path()) else {
+        return CheckRecord::default();
+    };
     serde_json::from_str(&text).unwrap_or_default()
 }
 
@@ -141,7 +162,10 @@ fn save_record(record: &CheckRecord) {
 }
 
 fn now() -> u64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs()
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
 }
 
 #[cfg(test)]
@@ -177,7 +201,13 @@ mod tests {
     #[test]
     fn release_json() {
         let body = r#"{"tag_name":"v0.2.0","html_url":"https://example.com/releases/v0.2.0","draft":false}"#;
-        assert_eq!(parse_release(body).unwrap(), ("v0.2.0".to_string(), "https://example.com/releases/v0.2.0".to_string()));
+        assert_eq!(
+            parse_release(body).unwrap(),
+            (
+                "v0.2.0".to_string(),
+                "https://example.com/releases/v0.2.0".to_string()
+            )
+        );
         assert!(parse_release("{}").is_err());
     }
 }

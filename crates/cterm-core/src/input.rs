@@ -106,8 +106,16 @@ pub fn encode_key(input: &KeyInput, mode: TermMode) -> Option<Vec<u8>> {
             }
             if alt {
                 // Alt 当 Meta 时用未经 Option 变换的键，否则 ⌥B 会发出 "∫"
-                let base = if input.key.chars().count() == 1 { &input.key } else { &input.text };
-                let base = if shift { base.to_uppercase() } else { base.to_string() };
+                let base = if input.key.chars().count() == 1 {
+                    &input.key
+                } else {
+                    &input.text
+                };
+                let base = if shift {
+                    base.to_uppercase()
+                } else {
+                    base.to_string()
+                };
                 return Some(esc_prefix(base.into_bytes()));
             }
             input.text.as_bytes().to_vec()
@@ -164,7 +172,13 @@ pub struct MouseInput {
 
 impl MouseInput {
     pub fn wheel(up: bool, col: u16, row: u16) -> Self {
-        MouseInput { action: MouseAction::Press, button: if up { 64 } else { 65 }, col, row, mods: 0 }
+        MouseInput {
+            action: MouseAction::Press,
+            button: if up { 64 } else { 65 },
+            col,
+            row,
+            mods: 0,
+        }
     }
 }
 
@@ -196,7 +210,11 @@ pub fn encode_mouse(event: &MouseInput, mode: TermMode) -> Option<Vec<u8>> {
     let row = event.row as u32 + 1;
 
     if mode.contains(TermMode::SGR_MOUSE) {
-        let suffix = if event.action == MouseAction::Release && !is_wheel { 'm' } else { 'M' };
+        let suffix = if event.action == MouseAction::Release && !is_wheel {
+            'm'
+        } else {
+            'M'
+        };
         return Some(format!("\x1b[<{code};{col};{row}{suffix}").into_bytes());
     }
 
@@ -229,35 +247,73 @@ mod tests {
     use super::*;
 
     fn key(key: &str, text: &str, mods: u8) -> KeyInput {
-        KeyInput { key: key.into(), text: text.into(), mods, alt_is_meta: true }
+        KeyInput {
+            key: key.into(),
+            text: text.into(),
+            mods,
+            alt_is_meta: true,
+        }
     }
 
     #[test]
     fn arrows_respect_app_cursor_and_modifiers() {
-        assert_eq!(encode_key(&key("ArrowUp", "", 0), TermMode::empty()).unwrap(), b"\x1b[A");
-        assert_eq!(encode_key(&key("ArrowUp", "", 0), TermMode::APP_CURSOR).unwrap(), b"\x1bOA");
-        assert_eq!(encode_key(&key("ArrowLeft", "", MOD_CTRL), TermMode::empty()).unwrap(), b"\x1b[1;5D");
-        assert_eq!(encode_key(&key("PageUp", "", MOD_SHIFT), TermMode::empty()).unwrap(), b"\x1b[5;2~");
+        assert_eq!(
+            encode_key(&key("ArrowUp", "", 0), TermMode::empty()).unwrap(),
+            b"\x1b[A"
+        );
+        assert_eq!(
+            encode_key(&key("ArrowUp", "", 0), TermMode::APP_CURSOR).unwrap(),
+            b"\x1bOA"
+        );
+        assert_eq!(
+            encode_key(&key("ArrowLeft", "", MOD_CTRL), TermMode::empty()).unwrap(),
+            b"\x1b[1;5D"
+        );
+        assert_eq!(
+            encode_key(&key("PageUp", "", MOD_SHIFT), TermMode::empty()).unwrap(),
+            b"\x1b[5;2~"
+        );
     }
 
     #[test]
     fn control_and_meta() {
-        assert_eq!(encode_key(&key("c", "c", MOD_CTRL), TermMode::empty()).unwrap(), vec![3]);
-        assert_eq!(encode_key(&key("[", "[", MOD_CTRL), TermMode::empty()).unwrap(), vec![0x1b]);
-        assert_eq!(encode_key(&key("b", "∫", MOD_ALT), TermMode::empty()).unwrap(), b"\x1bb");
-        assert_eq!(encode_key(&key("Backspace", "", MOD_ALT), TermMode::empty()).unwrap(), b"\x1b\x7f");
-        assert_eq!(encode_key(&key("Tab", "", MOD_SHIFT), TermMode::empty()).unwrap(), b"\x1b[Z");
+        assert_eq!(
+            encode_key(&key("c", "c", MOD_CTRL), TermMode::empty()).unwrap(),
+            vec![3]
+        );
+        assert_eq!(
+            encode_key(&key("[", "[", MOD_CTRL), TermMode::empty()).unwrap(),
+            vec![0x1b]
+        );
+        assert_eq!(
+            encode_key(&key("b", "∫", MOD_ALT), TermMode::empty()).unwrap(),
+            b"\x1bb"
+        );
+        assert_eq!(
+            encode_key(&key("Backspace", "", MOD_ALT), TermMode::empty()).unwrap(),
+            b"\x1b\x7f"
+        );
+        assert_eq!(
+            encode_key(&key("Tab", "", MOD_SHIFT), TermMode::empty()).unwrap(),
+            b"\x1b[Z"
+        );
         // Option 不当 Meta 时按系统输入文本发送
         let mut plain = key("b", "∫", MOD_ALT);
         plain.alt_is_meta = false;
-        assert_eq!(encode_key(&plain, TermMode::empty()).unwrap(), "∫".as_bytes());
+        assert_eq!(
+            encode_key(&plain, TermMode::empty()).unwrap(),
+            "∫".as_bytes()
+        );
         // Cmd 组合不进终端
         assert!(encode_key(&key("c", "c", MOD_META), TermMode::empty()).is_none());
     }
 
     #[test]
     fn text_passes_through() {
-        assert_eq!(encode_key(&key("", "中文", 0), TermMode::empty()).unwrap(), "中文".as_bytes());
+        assert_eq!(
+            encode_key(&key("", "中文", 0), TermMode::empty()).unwrap(),
+            "中文".as_bytes()
+        );
     }
 
     #[test]
@@ -268,15 +324,30 @@ mod tests {
 
     #[test]
     fn mouse_sgr_and_x10() {
-        let press = MouseInput { action: MouseAction::Press, button: 0, col: 4, row: 2, mods: 0 };
+        let press = MouseInput {
+            action: MouseAction::Press,
+            button: 0,
+            col: 4,
+            row: 2,
+            mods: 0,
+        };
         let sgr = TermMode::MOUSE_REPORT_CLICK | TermMode::SGR_MOUSE;
         assert_eq!(encode_mouse(&press, sgr).unwrap(), b"\x1b[<0;5;3M");
-        let release = MouseInput { action: MouseAction::Release, ..press.clone() };
+        let release = MouseInput {
+            action: MouseAction::Release,
+            ..press.clone()
+        };
         assert_eq!(encode_mouse(&release, sgr).unwrap(), b"\x1b[<0;5;3m");
-        assert_eq!(encode_mouse(&press, TermMode::MOUSE_REPORT_CLICK).unwrap(), vec![0x1b, b'[', b'M', 32, 37, 35]);
+        assert_eq!(
+            encode_mouse(&press, TermMode::MOUSE_REPORT_CLICK).unwrap(),
+            vec![0x1b, b'[', b'M', 32, 37, 35]
+        );
         // 未开启上报 / 按住 Shift 时不编码
         assert!(encode_mouse(&press, TermMode::empty()).is_none());
-        let shifted = MouseInput { mods: MOD_SHIFT, ..press };
+        let shifted = MouseInput {
+            mods: MOD_SHIFT,
+            ..press
+        };
         assert!(encode_mouse(&shifted, sgr).is_none());
     }
 
@@ -285,32 +356,74 @@ mod tests {
         let plain = TermMode::empty();
         assert_eq!(encode_key(&key("F1", "", 0), plain).unwrap(), b"\x1bOP");
         // F1-F4 即使不在应用光标模式也用 SS3；带修饰时改用 CSI 1;m
-        assert_eq!(encode_key(&key("F4", "", MOD_SHIFT), plain).unwrap(), b"\x1b[1;2S");
+        assert_eq!(
+            encode_key(&key("F4", "", MOD_SHIFT), plain).unwrap(),
+            b"\x1b[1;2S"
+        );
         assert_eq!(encode_key(&key("F5", "", 0), plain).unwrap(), b"\x1b[15~");
-        assert_eq!(encode_key(&key("F12", "", MOD_CTRL), plain).unwrap(), b"\x1b[24;5~");
-        assert_eq!(encode_key(&key("Home", "", 0), TermMode::APP_CURSOR).unwrap(), b"\x1bOH");
+        assert_eq!(
+            encode_key(&key("F12", "", MOD_CTRL), plain).unwrap(),
+            b"\x1b[24;5~"
+        );
+        assert_eq!(
+            encode_key(&key("Home", "", 0), TermMode::APP_CURSOR).unwrap(),
+            b"\x1bOH"
+        );
         assert_eq!(encode_key(&key("End", "", 0), plain).unwrap(), b"\x1b[F");
-        assert_eq!(encode_key(&key("Delete", "", MOD_CTRL | MOD_SHIFT), plain).unwrap(), b"\x1b[3;6~");
+        assert_eq!(
+            encode_key(&key("Delete", "", MOD_CTRL | MOD_SHIFT), plain).unwrap(),
+            b"\x1b[3;6~"
+        );
         // 应用光标模式下带修饰的方向键仍是 CSI 1;m
-        assert_eq!(encode_key(&key("ArrowRight", "", MOD_ALT), TermMode::APP_CURSOR).unwrap(), b"\x1b[1;3C");
-        assert_eq!(encode_key(&key("Enter", "", MOD_ALT), plain).unwrap(), b"\x1b\r");
-        assert_eq!(encode_key(&key("Backspace", "", MOD_CTRL), plain).unwrap(), vec![0x08]);
-        assert_eq!(encode_key(&key("Escape", "", 0), plain).unwrap(), vec![0x1b]);
+        assert_eq!(
+            encode_key(&key("ArrowRight", "", MOD_ALT), TermMode::APP_CURSOR).unwrap(),
+            b"\x1b[1;3C"
+        );
+        assert_eq!(
+            encode_key(&key("Enter", "", MOD_ALT), plain).unwrap(),
+            b"\x1b\r"
+        );
+        assert_eq!(
+            encode_key(&key("Backspace", "", MOD_CTRL), plain).unwrap(),
+            vec![0x08]
+        );
+        assert_eq!(
+            encode_key(&key("Escape", "", 0), plain).unwrap(),
+            vec![0x1b]
+        );
     }
 
     #[test]
     fn control_symbols_and_combinations() {
         let plain = TermMode::empty();
-        assert_eq!(encode_key(&key(" ", " ", MOD_CTRL), plain).unwrap(), vec![0]);
-        assert_eq!(encode_key(&key("/", "/", MOD_CTRL), plain).unwrap(), vec![0x1f]);
-        assert_eq!(encode_key(&key("?", "?", MOD_CTRL), plain).unwrap(), vec![0x7f]);
+        assert_eq!(
+            encode_key(&key(" ", " ", MOD_CTRL), plain).unwrap(),
+            vec![0]
+        );
+        assert_eq!(
+            encode_key(&key("/", "/", MOD_CTRL), plain).unwrap(),
+            vec![0x1f]
+        );
+        assert_eq!(
+            encode_key(&key("?", "?", MOD_CTRL), plain).unwrap(),
+            vec![0x7f]
+        );
         // Ctrl 字母不分大小写
-        assert_eq!(encode_key(&key("C", "C", MOD_CTRL | MOD_SHIFT), plain).unwrap(), vec![3]);
-        assert_eq!(encode_key(&key("c", "c", MOD_CTRL | MOD_ALT), plain).unwrap(), vec![0x1b, 3]);
+        assert_eq!(
+            encode_key(&key("C", "C", MOD_CTRL | MOD_SHIFT), plain).unwrap(),
+            vec![3]
+        );
+        assert_eq!(
+            encode_key(&key("c", "c", MOD_CTRL | MOD_ALT), plain).unwrap(),
+            vec![0x1b, 3]
+        );
         // 没有对应控制字符的键不发送，交给界面
         assert!(encode_key(&key("é", "é", MOD_CTRL), plain).is_none());
         assert!(encode_key(&key("Shift", "", 0), plain).is_none());
-        assert_eq!(encode_key(&key("b", "B", MOD_ALT | MOD_SHIFT), plain).unwrap(), b"\x1bB");
+        assert_eq!(
+            encode_key(&key("b", "B", MOD_ALT | MOD_SHIFT), plain).unwrap(),
+            b"\x1bB"
+        );
     }
 
     #[test]
@@ -323,34 +436,79 @@ mod tests {
     #[test]
     fn mouse_release_wheel_motion_and_modifiers() {
         let click = TermMode::MOUSE_REPORT_CLICK;
-        let press = MouseInput { action: MouseAction::Press, button: 2, col: 0, row: 0, mods: MOD_ALT | MOD_CTRL };
+        let press = MouseInput {
+            action: MouseAction::Press,
+            button: 2,
+            col: 0,
+            row: 0,
+            mods: MOD_ALT | MOD_CTRL,
+        };
         // X10：右键 2 + Alt 8 + Ctrl 16
-        assert_eq!(encode_mouse(&press, click).unwrap(), [0x1b, b'[', b'M', 32 + 26, 33, 33]);
+        assert_eq!(
+            encode_mouse(&press, click).unwrap(),
+            [0x1b, b'[', b'M', 32 + 26, 33, 33]
+        );
         // X10 松开统一报 3，保留修饰位
-        let release = MouseInput { action: MouseAction::Release, ..press.clone() };
-        assert_eq!(encode_mouse(&release, click).unwrap(), [0x1b, b'[', b'M', 32 + 27, 33, 33]);
+        let release = MouseInput {
+            action: MouseAction::Release,
+            ..press.clone()
+        };
+        assert_eq!(
+            encode_mouse(&release, click).unwrap(),
+            [0x1b, b'[', b'M', 32 + 27, 33, 33]
+        );
         // 滚轮：SGR 用 64/65，没有松开事件
         let wheel = MouseInput::wheel(false, 9, 9);
-        assert_eq!(encode_mouse(&wheel, click | TermMode::SGR_MOUSE).unwrap(), b"\x1b[<65;10;10M");
-        let wheel_release = MouseInput { action: MouseAction::Release, ..wheel };
+        assert_eq!(
+            encode_mouse(&wheel, click | TermMode::SGR_MOUSE).unwrap(),
+            b"\x1b[<65;10;10M"
+        );
+        let wheel_release = MouseInput {
+            action: MouseAction::Release,
+            ..wheel
+        };
         assert!(encode_mouse(&wheel_release, click).is_none());
         // 移动：只有 1002 在按键拖动时、1003 任何时候才上报
-        let drag = MouseInput { action: MouseAction::Move, button: 0, col: 1, row: 1, mods: 0 };
-        let hover = MouseInput { button: 3, ..drag.clone() };
+        let drag = MouseInput {
+            action: MouseAction::Move,
+            button: 0,
+            col: 1,
+            row: 1,
+            mods: 0,
+        };
+        let hover = MouseInput {
+            button: 3,
+            ..drag.clone()
+        };
         assert!(encode_mouse(&drag, click).is_none());
-        assert_eq!(encode_mouse(&drag, TermMode::MOUSE_DRAG | TermMode::SGR_MOUSE).unwrap(), b"\x1b[<32;2;2M");
+        assert_eq!(
+            encode_mouse(&drag, TermMode::MOUSE_DRAG | TermMode::SGR_MOUSE).unwrap(),
+            b"\x1b[<32;2;2M"
+        );
         assert!(encode_mouse(&hover, TermMode::MOUSE_DRAG).is_none());
-        assert_eq!(encode_mouse(&hover, TermMode::MOUSE_MOTION | TermMode::SGR_MOUSE).unwrap(), b"\x1b[<35;2;2M");
+        assert_eq!(
+            encode_mouse(&hover, TermMode::MOUSE_MOTION | TermMode::SGR_MOUSE).unwrap(),
+            b"\x1b[<35;2;2M"
+        );
     }
 
     #[test]
     fn mouse_large_coordinates() {
-        let far = MouseInput { action: MouseAction::Press, button: 0, col: 299, row: 0, mods: 0 };
+        let far = MouseInput {
+            action: MouseAction::Press,
+            button: 0,
+            col: 299,
+            row: 0,
+            mods: 0,
+        };
         // 经典编码超过 223 列无法表示
         assert!(encode_mouse(&far, TermMode::MOUSE_REPORT_CLICK).is_none());
         // UTF-8 扩展：32 + 300 = U+014C，两字节
         let utf8 = encode_mouse(&far, TermMode::MOUSE_REPORT_CLICK | TermMode::UTF8_MOUSE).unwrap();
         assert_eq!(utf8, [0x1b, b'[', b'M', 32, 0xc5, 0x8c, 33]);
-        assert_eq!(encode_mouse(&far, TermMode::MOUSE_REPORT_CLICK | TermMode::SGR_MOUSE).unwrap(), b"\x1b[<0;300;1M");
+        assert_eq!(
+            encode_mouse(&far, TermMode::MOUSE_REPORT_CLICK | TermMode::SGR_MOUSE).unwrap(),
+            b"\x1b[<0;300;1M"
+        );
     }
 }

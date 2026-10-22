@@ -19,7 +19,10 @@ pub fn import() -> Vec<Profile> {
 
 /// ssh_dir：~/.ssh 目录。Include 的相对路径相对它，~ 取它的上级目录（测试时指向临时目录）
 pub fn parse(content: &str, ssh_dir: &Path) -> Vec<Profile> {
-    let mut parser = Parser { ssh_dir, profiles: Vec::new() };
+    let mut parser = Parser {
+        ssh_dir,
+        profiles: Vec::new(),
+    };
     parser.parse_lines(content, &mut Vec::new(), 0, false);
     parser.profiles
 }
@@ -37,7 +40,12 @@ fn home(ssh_dir: &Path) -> &Path {
 fn expand_home(path: &str, ssh_dir: &Path) -> String {
     if let Some(rest) = path.strip_prefix("~/") {
         // 按组件重建：Windows 上把 rest 里的 / 统一成 \，不留混合分隔符
-        return home(ssh_dir).join(rest).components().collect::<PathBuf>().display().to_string();
+        return home(ssh_dir)
+            .join(rest)
+            .components()
+            .collect::<PathBuf>()
+            .display()
+            .to_string();
     }
     path.to_string()
 }
@@ -46,7 +54,13 @@ impl Parser<'_> {
     /// current：当前 Host 块对应的 profile 下标。
     /// in_host_include：本文件是在具体主机的 Host 块里被 Include 的。OpenSSH 只在外层块匹配时才读它，
     /// 其中的 Host 块要内外两层同时匹配才生效，所以这里不从中新建主机，只把开头的配置项归给外层块
-    fn parse_lines(&mut self, content: &str, current: &mut Vec<usize>, depth: usize, in_host_include: bool) {
+    fn parse_lines(
+        &mut self,
+        content: &str,
+        current: &mut Vec<usize>,
+        depth: usize,
+        in_host_include: bool,
+    ) {
         // 当前块只列了具体主机名（没有通配符）
         let mut concrete_block = false;
         let ssh_dir = self.ssh_dir;
@@ -56,7 +70,10 @@ impl Parser<'_> {
                 continue;
             }
             let (key, raw_value) = match line.split_once(|c: char| c.is_whitespace() || c == '=') {
-                Some((key, value)) => (key.to_lowercase(), value.trim().trim_start_matches('=').trim()),
+                Some((key, value)) => (
+                    key.to_lowercase(),
+                    value.trim().trim_start_matches('=').trim(),
+                ),
                 None => continue,
             };
             // ProxyCommand / Include 取原文（命令里的引号要保留）；其余配置项去掉两端引号
@@ -89,7 +106,9 @@ impl Parser<'_> {
                 continue;
             }
             for &index in current.iter() {
-                let ProfileKind::Ssh(options) = &mut self.profiles[index].kind else { continue };
+                let ProfileKind::Ssh(options) = &mut self.profiles[index].kind else {
+                    continue;
+                };
                 match key.as_str() {
                     "hostname" => options.host = value.clone(),
                     "user" => options.user = value.clone(),
@@ -102,9 +121,13 @@ impl Parser<'_> {
                             options.jump_host = format!("{GROUP_ID}:{first}");
                         }
                     }
-                    "proxycommand" if value != "none" => options.proxy_command = raw_value.to_string(),
+                    "proxycommand" if value != "none" => {
+                        options.proxy_command = raw_value.to_string()
+                    }
                     "forwardagent" => options.agent_forward = value.eq_ignore_ascii_case("yes"),
-                    "serveraliveinterval" => options.keepalive_interval = value.parse().unwrap_or(30),
+                    "serveraliveinterval" => {
+                        options.keepalive_interval = value.parse().unwrap_or(30)
+                    }
                     _ => {}
                 }
             }
@@ -123,7 +146,10 @@ impl Parser<'_> {
             group: GROUP_ID.into(),
             icon: "server".into(),
             is_builtin: true,
-            kind: ProfileKind::Ssh(SshOptions { host: alias.to_string(), ..Default::default() }),
+            kind: ProfileKind::Ssh(SshOptions {
+                host: alias.to_string(),
+                ..Default::default()
+            }),
             ..Default::default()
         });
         self.profiles.len() - 1
@@ -138,7 +164,9 @@ impl Parser<'_> {
         // ponytail: 按空白分隔多个路径，带空格的引号路径不支持
         for pattern in value.split_whitespace() {
             for path in self.expand_include(pattern.trim_matches('"')) {
-                let Ok(content) = std::fs::read_to_string(&path) else { continue };
+                let Ok(content) = std::fs::read_to_string(&path) else {
+                    continue;
+                };
                 let mut inner = current.to_vec();
                 self.parse_lines(&content, &mut inner, depth + 1, in_host_include);
             }
@@ -152,13 +180,19 @@ impl Parser<'_> {
             // 绝对路径 join 后仍是它自己
             None => self.ssh_dir.join(pattern),
         };
-        let Some(name) = path.file_name().and_then(|name| name.to_str()) else { return Vec::new() };
+        let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+            return Vec::new();
+        };
         if !name.contains(['*', '?']) {
             return vec![path];
         }
         // ponytail: 只有最后一段支持通配，目录层的通配（如 ~/.ssh/*/config）不展开
-        let Some(dir) = path.parent() else { return Vec::new() };
-        let Ok(entries) = std::fs::read_dir(dir) else { return Vec::new() };
+        let Some(dir) = path.parent() else {
+            return Vec::new();
+        };
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return Vec::new();
+        };
         let pattern: Vec<char> = name.chars().collect();
         let mut matched = Vec::new();
         for entry in entries.flatten() {
@@ -181,9 +215,14 @@ impl Parser<'_> {
 fn wildcard_match(pattern: &[char], text: &[char]) -> bool {
     match (pattern.first(), text.first()) {
         (None, None) => true,
-        (Some('*'), _) => wildcard_match(&pattern[1..], text) || (!text.is_empty() && wildcard_match(pattern, &text[1..])),
+        (Some('*'), _) => {
+            wildcard_match(&pattern[1..], text)
+                || (!text.is_empty() && wildcard_match(pattern, &text[1..]))
+        }
         (Some('?'), Some(_)) => wildcard_match(&pattern[1..], &text[1..]),
-        (Some(expected), Some(actual)) if expected == actual => wildcard_match(&pattern[1..], &text[1..]),
+        (Some(expected), Some(actual)) if expected == actual => {
+            wildcard_match(&pattern[1..], &text[1..])
+        }
         _ => false,
     }
 }
@@ -193,12 +232,17 @@ mod tests {
     use super::*;
 
     fn ssh(profile: &Profile) -> &SshOptions {
-        let ProfileKind::Ssh(options) = &profile.kind else { panic!() };
+        let ProfileKind::Ssh(options) = &profile.kind else {
+            panic!()
+        };
         options
     }
 
     fn names(profiles: &[Profile]) -> Vec<&str> {
-        profiles.iter().map(|profile| profile.name.as_str()).collect()
+        profiles
+            .iter()
+            .map(|profile| profile.name.as_str())
+            .collect()
     }
 
     /// 临时的 home 目录，返回其中的 .ssh
@@ -222,7 +266,10 @@ mod tests {
         );
         assert_eq!(names(&profiles), ["web", "web-alias", "bastion"]);
         let web = ssh(&profiles[0]);
-        assert_eq!((web.host.as_str(), web.user.as_str(), web.port), ("192.0.2.5", "deploy", 2222));
+        assert_eq!(
+            (web.host.as_str(), web.user.as_str(), web.port),
+            ("192.0.2.5", "deploy", 2222)
+        );
         assert_eq!(web.jump_host, "ssh-config:bastion");
         let bastion = ssh(&profiles[2]);
         assert_eq!(bastion.host, "bastion.example.com");
@@ -237,15 +284,24 @@ mod tests {
             "glob",
             &[
                 ("config.d/b", "Host b-host\n  HostName 192.0.2.3\n"),
-                ("config.d/a", "Host a-host\n  HostName 192.0.2.2\n  IdentityFile ~/.ssh/id_a\n"),
+                (
+                    "config.d/a",
+                    "Host a-host\n  HostName 192.0.2.2\n  IdentityFile ~/.ssh/id_a\n",
+                ),
                 ("config.d/.hidden", "Host hidden\n"),
                 ("extra.conf", "Host extra\n  ProxyCommand none\n"),
             ],
         );
-        let profiles = parse("Include ~/.ssh/config.d/* extra.conf missing.conf\nHost main\n  HostName 192.0.2.1\n", &ssh_dir);
+        let profiles = parse(
+            "Include ~/.ssh/config.d/* extra.conf missing.conf\nHost main\n  HostName 192.0.2.1\n",
+            &ssh_dir,
+        );
         assert_eq!(names(&profiles), ["a-host", "b-host", "extra", "main"]);
         assert_eq!(ssh(&profiles[0]).host, "192.0.2.2");
-        assert_eq!(ssh(&profiles[0]).private_keys, [ssh_dir.join("id_a").display().to_string()]);
+        assert_eq!(
+            ssh(&profiles[0]).private_keys,
+            [ssh_dir.join("id_a").display().to_string()]
+        );
         assert_eq!(ssh(&profiles[2]).proxy_command, "");
         let _ = std::fs::remove_dir_all(ssh_dir.parent().unwrap());
     }
@@ -255,7 +311,10 @@ mod tests {
         let ssh_dir = temp_ssh_dir(
             "block",
             &[
-                ("web.conf", "User deploy\nHost inner\n  HostName 198.51.100.1\n"),
+                (
+                    "web.conf",
+                    "User deploy\nHost inner\n  HostName 198.51.100.1\n",
+                ),
                 ("all.conf", "Host starred\n  HostName 198.51.100.2\n"),
             ],
         );
@@ -270,16 +329,27 @@ mod tests {
 
     #[test]
     fn include_loop_stops_and_duplicate_hosts_merge() {
-        let ssh_dir = temp_ssh_dir("loop", &[("loop.conf", "Include loop.conf\nHost looped\n  User u\n")]);
+        let ssh_dir = temp_ssh_dir(
+            "loop",
+            &[("loop.conf", "Include loop.conf\nHost looped\n  User u\n")],
+        );
         let profiles = parse("Include loop.conf\nHost looped\n  Port 2022\n", &ssh_dir);
         assert_eq!(names(&profiles), ["looped"]);
-        assert_eq!((ssh(&profiles[0]).user.as_str(), ssh(&profiles[0]).port), ("u", 2022));
+        assert_eq!(
+            (ssh(&profiles[0]).user.as_str(), ssh(&profiles[0]).port),
+            ("u", 2022)
+        );
         let _ = std::fs::remove_dir_all(ssh_dir.parent().unwrap());
     }
 
     #[test]
     fn wildcards() {
-        let matches = |pattern: &str, text: &str| wildcard_match(&pattern.chars().collect::<Vec<_>>(), &text.chars().collect::<Vec<_>>());
+        let matches = |pattern: &str, text: &str| {
+            wildcard_match(
+                &pattern.chars().collect::<Vec<_>>(),
+                &text.chars().collect::<Vec<_>>(),
+            )
+        };
         assert!(matches("*", "orbstack"));
         assert!(matches("*.conf", "a.conf"));
         assert!(!matches("*.conf", "a.conf.bak"));

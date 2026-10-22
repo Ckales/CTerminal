@@ -3,6 +3,7 @@ import 'dart:convert';
 
 import 'package:cterminal/app_state.dart';
 import 'package:cterminal/src/rust/api/ai.dart' as ai;
+import 'package:cterminal/src/rust/api/terminal.dart' as terminal;
 import 'package:cterminal/src/rust/frb_generated.dart';
 import 'package:cterminal/terminal/terminal_session.dart';
 import 'package:cterminal/theme.dart';
@@ -16,6 +17,22 @@ import 'package:flutter_test/flutter_test.dart';
 class _FakeApi extends Fake implements RustLibApi {
   bool hasApiKey = true;
   int nextRequestId = 100;
+  final agentChats =
+      <
+        ({
+          int requestId,
+          String presetId,
+          String messages,
+          String context,
+          int terminalId,
+          StreamController<ai.AiChatEvent> events,
+        })
+      >[];
+  final toolExecutions = <({int terminalId, String callId, String command})>[];
+  final openedTerminalIds = <int>[];
+  final closedTerminalIds = <int>[];
+  final _terminalEvents = <int, StreamController<terminal.TermEvent>>{};
+  Completer<String>? nextToolExecution;
   final chats =
       <
         ({
@@ -49,6 +66,53 @@ class _FakeApi extends Fake implements RustLibApi {
   void crateApiAiAiChatCancel({required int requestId}) {
     cancelledIds.add(requestId);
   }
+
+  @override
+  Stream<ai.AiChatEvent> crateApiAiAiAgentStream({
+    required int requestId,
+    required String presetId,
+    required String messagesJson,
+    required String context,
+    required int terminalId,
+  }) {
+    final events = StreamController<ai.AiChatEvent>();
+    agentChats.add((
+      requestId: requestId,
+      presetId: presetId,
+      messages: messagesJson,
+      context: context,
+      terminalId: terminalId,
+      events: events,
+    ));
+    return events.stream;
+  }
+
+  @override
+  Future<String> crateApiAiAiToolExecute({
+    required int terminalId,
+    required String callId,
+    required String command,
+  }) {
+    toolExecutions.add((
+      terminalId: terminalId,
+      callId: callId,
+      command: command,
+    ));
+    return nextToolExecution?.future ??
+        Future.value(
+          jsonEncode({
+            'output': '/tmp/example',
+            'exitCode': 0,
+            'status': 'completed',
+          }),
+        );
+  }
+
+  @override
+  void crateApiAiAiToolCancel({
+    required int terminalId,
+    required String callId,
+  }) {}
 
   @override
   Stream<ai.AiChatEvent> crateApiAiAiChatStream({
@@ -85,6 +149,24 @@ class _FakeApi extends Fake implements RustLibApi {
 
   @override
   void crateApiTerminalTermApplySettings() {}
+
+  @override
+  Stream<terminal.TermEvent> crateApiTerminalTermOpen({
+    required int id,
+    required String profileJson,
+    required terminal.TermSize size,
+  }) {
+    openedTerminalIds.add(id);
+    final events = StreamController<terminal.TermEvent>();
+    _terminalEvents[id] = events;
+    return events.stream;
+  }
+
+  @override
+  void crateApiTerminalTermClose({required int id}) {
+    closedTerminalIds.add(id);
+    _terminalEvents.remove(id)?.close();
+  }
 }
 
 Map<String, dynamic> _config({bool service = true}) => {
@@ -109,6 +191,32 @@ TerminalSession _session(String id) => TerminalSession(
   },
 );
 
+void _emitToolCall(StreamController<ai.AiChatEvent> events) {
+  events.add(
+    ai.AiChatEvent(
+      kind: 'tool_calls',
+      text: jsonEncode({
+        'role': 'assistant',
+        'content': '',
+        'tool_calls': [
+          {
+            'id': 'call_1',
+            'type': 'function',
+            'function': {
+              'name': 'execute_terminal_command',
+              'arguments': jsonEncode({
+                'command': 'pwd',
+                'description': '查看当前目录',
+              }),
+            },
+          },
+        ],
+      }),
+    ),
+  );
+  events.add(const ai.AiChatEvent(kind: 'done', text: ''));
+}
+
 void main() {
   late _FakeApi api;
 
@@ -120,6 +228,11 @@ void main() {
   setUp(() {
     api.hasApiKey = true;
     api.chats.clear();
+    api.agentChats.clear();
+    api.toolExecutions.clear();
+    api.openedTerminalIds.clear();
+    api.closedTerminalIds.clear();
+    api.nextToolExecution = null;
     api.cancelledIds.clear();
     api.nextRequestId = 100;
     api.apiKeys.clear();
@@ -130,10 +243,21 @@ void main() {
     WidgetTester tester, {
     bool service = true,
     List<TerminalSession>? sessions,
+    bool startSessions = false,
   }) async {
     final app = AppState(config: _config(service: service));
     for (final session in sessions ?? <TerminalSession>[]) {
       app.tabs.add(TerminalTab(session));
+      if (startSessions) {
+        session.start(
+          const terminal.TermSize(
+            cols: 80,
+            rows: 24,
+            cellWidth: 8,
+            cellHeight: 16,
+          ),
+        );
+      }
     }
     tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
       WindowControl.channel,
@@ -170,6 +294,53 @@ void main() {
     );
     expect(tester.widget<IconButton>(sendButton).onPressed, isNull);
     expect(api.chats, isEmpty);
+    app.dispose();
+  });
+
+  testWidgets('Enter 发送，Shift+Enter 换行，输入法组合时不发送', (tester) async {
+    final app = await mountWorkspace(tester);
+    final inputFinder = find.byKey(const ValueKey('ai-input'));
+    await tester.enterText(inputFinder, 'send this');
+    await tester.pump();
+    await tester.tap(inputFinder);
+    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+    await tester.pump();
+
+    expect(api.chats, hasLength(1));
+    expect(
+      (jsonDecode(api.chats.single.messages) as List).last['content'],
+      'send this',
+    );
+    expect(tester.widget<TextField>(inputFinder).controller!.text, '');
+
+    api.chats.single.events.add(const ai.AiChatEvent(kind: 'done', text: ''));
+    await tester.pump(const Duration(milliseconds: 50));
+    await tester.enterText(inputFinder, 'line one');
+    await tester.pump();
+    await tester.tap(inputFinder);
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
+    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
+    await tester.pump();
+
+    expect(api.chats, hasLength(1));
+    expect(
+      tester.widget<TextField>(inputFinder).controller!.text,
+      'line one\n',
+    );
+
+    final controller = tester.widget<TextField>(inputFinder).controller!;
+    controller.value = const TextEditingValue(
+      text: 'composing',
+      composing: TextRange(start: 0, end: 9),
+    );
+    await tester.pump();
+    await tester.tap(inputFinder);
+    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+    await tester.pump();
+
+    expect(api.chats, hasLength(1));
+    expect(controller.text, 'composing');
     app.dispose();
   });
 
@@ -323,6 +494,184 @@ void main() {
     expect(second.presetId, 'general');
     second.events.add(const ai.AiChatEvent(kind: 'done', text: ''));
     await tester.pump(const Duration(milliseconds: 50));
+    app.dispose();
+  });
+
+  testWidgets('工具调用需要确认；批准后结果会继续发送给 AI', (tester) async {
+    final session = _session('first');
+    final app = await mountWorkspace(
+      tester,
+      sessions: [session],
+      startSessions: true,
+    );
+    await tester.enterText(
+      find.byKey(const ValueKey('ai-input')),
+      'show current directory',
+    );
+    await tester.pump();
+    await tester.tap(find.byTooltip('发送'));
+    await tester.pump();
+    expect(api.agentChats, hasLength(1));
+    expect(api.agentChats.single.terminalId, session.id);
+
+    _emitToolCall(api.agentChats.single.events);
+    await tester.pump(const Duration(milliseconds: 50));
+    expect(find.text('确认执行'), findsOneWidget);
+    expect(find.text('拒绝执行'), findsOneWidget);
+    expect(api.toolExecutions, isEmpty);
+    final clearButton = tester.widget<IconButton>(find.ancestor(of: find.byTooltip('清空对话'), matching: find.byType(IconButton)).first);
+    expect(clearButton.onPressed, isNull);
+    await tester.tap(find.byTooltip('清空对话'));
+    await tester.pump();
+    expect(find.text('确认执行'), findsOneWidget);
+    expect(api.toolExecutions, isEmpty);
+
+    final toolExecution = Completer<String>();
+    api.nextToolExecution = toolExecution;
+    await tester.tap(find.text('确认执行'));
+    await tester.pump();
+    expect(api.toolExecutions, [
+      (terminalId: session.id, callId: 'call_1', command: 'pwd'),
+    ]);
+    expect(find.text('正在执行命令…'), findsOneWidget);
+    expect(
+      tester.widget<IconButton>(find.ancestor(of: find.byTooltip('清空对话'), matching: find.byType(IconButton)).first).onPressed,
+      isNull,
+    );
+    await tester.tap(find.byTooltip('清空对话'));
+    await tester.pump();
+    expect(find.textContaining('pwd'), findsOneWidget);
+    expect(api.toolExecutions, hasLength(1));
+
+    toolExecution.complete(
+      jsonEncode({
+        'output': '/tmp/example',
+        'exitCode': 0,
+        'status': 'completed',
+      }),
+    );
+    await tester.pump(const Duration(milliseconds: 50));
+    expect(api.agentChats, hasLength(2));
+    final continuedMessages =
+        jsonDecode(api.agentChats.last.messages) as List<dynamic>;
+    expect(
+      continuedMessages.any(
+        (message) =>
+            message['role'] == 'assistant' && message['tool_calls'] is List,
+      ),
+      isTrue,
+    );
+    final toolResult = continuedMessages.singleWhere(
+      (message) => message['role'] == 'tool',
+    );
+    expect(toolResult['tool_call_id'], 'call_1');
+    expect(jsonDecode(toolResult['content'] as String), {
+      'output': '/tmp/example',
+      'exitCode': 0,
+      'status': 'completed',
+    });
+    app.dispose();
+  });
+
+  testWidgets('拒绝工具调用会回传拒绝结果且绝不执行', (tester) async {
+    final session = _session('first');
+    final app = await mountWorkspace(
+      tester,
+      sessions: [session],
+      startSessions: true,
+    );
+    await tester.enterText(
+      find.byKey(const ValueKey('ai-input')),
+      'show current directory',
+    );
+    await tester.pump();
+    await tester.tap(find.byTooltip('发送'));
+    await tester.pump();
+    _emitToolCall(api.agentChats.single.events);
+    await tester.pump(const Duration(milliseconds: 50));
+
+    await tester.tap(find.text('拒绝执行'));
+    await tester.pump(const Duration(milliseconds: 50));
+    expect(api.toolExecutions, isEmpty);
+    expect(api.agentChats, hasLength(2));
+    final continuedMessages =
+        jsonDecode(api.agentChats.last.messages) as List<dynamic>;
+    final toolResult = continuedMessages.singleWhere(
+      (message) => message['role'] == 'tool',
+    );
+    expect(toolResult['tool_call_id'], 'call_1');
+    expect(
+      jsonDecode(toolResult['content'] as String),
+      containsPair('status', 'denied'),
+    );
+    app.dispose();
+  });
+
+  testWidgets('切换标签后批准仍绑定发起时的终端 ID', (tester) async {
+    final first = _session('first');
+    final second = _session('second');
+    final app = await mountWorkspace(
+      tester,
+      sessions: [first, second],
+      startSessions: true,
+    );
+    final originalId = first.id;
+    await tester.enterText(
+      find.byKey(const ValueKey('ai-input')),
+      'show current directory',
+    );
+    await tester.pump();
+    await tester.tap(find.byTooltip('发送'));
+    await tester.pump();
+    _emitToolCall(api.agentChats.single.events);
+    await tester.pump(const Duration(milliseconds: 50));
+
+    app.selectTab(1);
+    await tester.pumpAndSettle();
+    expect(find.text('确认执行'), findsNothing);
+    app.selectTab(0);
+    await tester.pumpAndSettle();
+    expect(find.text('确认执行'), findsOneWidget);
+    await tester.tap(find.text('确认执行'));
+    await tester.pump(const Duration(milliseconds: 50));
+
+    expect(api.toolExecutions, [
+      (terminalId: originalId, callId: 'call_1', command: 'pwd'),
+    ]);
+    expect(api.agentChats.last.terminalId, originalId);
+    app.dispose();
+  });
+
+  testWidgets('重启终端后旧工具确认消失且不能执行旧命令', (tester) async {
+    final session = _session('first');
+    final app = await mountWorkspace(
+      tester,
+      sessions: [session],
+      startSessions: true,
+    );
+    await tester.enterText(
+      find.byKey(const ValueKey('ai-input')),
+      'show current directory',
+    );
+    await tester.pump();
+    await tester.tap(find.byTooltip('发送'));
+    await tester.pump();
+    _emitToolCall(api.agentChats.single.events);
+    await tester.pump(const Duration(milliseconds: 50));
+    expect(find.text('确认执行'), findsOneWidget);
+    final originalId = session.id;
+
+    session.restart();
+    expect(session.id, isNot(originalId));
+    // Tap before the next frame rebuilds the panel to exercise the stale-card guard.
+    await tester.tap(find.text('确认执行'));
+    await tester.pump();
+
+    expect(find.text('确认执行'), findsNothing);
+    expect(find.text('终端已重启，请发送新消息开始对话'), findsOneWidget);
+    expect(api.toolExecutions, isEmpty);
+    expect(api.agentChats, hasLength(1));
+    expect(api.openedTerminalIds, contains(session.id));
     app.dispose();
   });
 

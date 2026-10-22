@@ -82,7 +82,11 @@ impl Palette {
 }
 
 fn to_rgb(value: u32) -> Rgb {
-    Rgb { r: (value >> 16) as u8, g: (value >> 8) as u8, b: value as u8 }
+    Rgb {
+        r: (value >> 16) as u8,
+        g: (value >> 8) as u8,
+        b: value as u8,
+    }
 }
 
 fn from_rgb(rgb: Rgb) -> u32 {
@@ -158,8 +162,13 @@ impl Resolver<'_> {
         match color {
             Color::Spec(rgb) => from_rgb(rgb),
             Color::Indexed(index) => {
-                let index = if bold && self.bold_is_bright && index < 8 { index + 8 } else { index };
-                self.overridden(index as usize).unwrap_or_else(|| self.palette.indexed(index))
+                let index = if bold && self.bold_is_bright && index < 8 {
+                    index + 8
+                } else {
+                    index
+                };
+                self.overridden(index as usize)
+                    .unwrap_or_else(|| self.palette.indexed(index))
             }
             Color::Named(named) => self.named(named, bold),
         }
@@ -172,11 +181,19 @@ impl Resolver<'_> {
     fn named(&self, named: NamedColor, bold: bool) -> u32 {
         let index = named as usize;
         if index < 16 {
-            let index = if bold && self.bold_is_bright && index < 8 { index + 8 } else { index };
+            let index = if bold && self.bold_is_bright && index < 8 {
+                index + 8
+            } else {
+                index
+            };
             return self.overridden(index).unwrap_or(self.palette.ansi[index]);
         }
-        let foreground = self.overridden(NamedColor::Foreground as usize).unwrap_or(self.palette.foreground);
-        let background = self.overridden(NamedColor::Background as usize).unwrap_or(self.palette.background);
+        let foreground = self
+            .overridden(NamedColor::Foreground as usize)
+            .unwrap_or(self.palette.foreground);
+        let background = self
+            .overridden(NamedColor::Background as usize)
+            .unwrap_or(self.palette.background);
         match named {
             NamedColor::Foreground | NamedColor::BrightForeground => foreground,
             NamedColor::Background => background,
@@ -191,7 +208,8 @@ impl Resolver<'_> {
     }
 
     fn background(&self) -> u32 {
-        self.overridden(NamedColor::Background as usize).unwrap_or(self.palette.background)
+        self.overridden(NamedColor::Background as usize)
+            .unwrap_or(self.palette.background)
     }
 }
 
@@ -203,12 +221,21 @@ pub fn build<T: EventListener>(
     bold_is_bright: bool,
 ) -> Frame {
     let content = term.renderable_content();
-    let resolver = Resolver { palette, overrides: content.colors, bold_is_bright };
+    let resolver = Resolver {
+        palette,
+        overrides: content.colors,
+        bold_is_bright,
+    };
     let default_bg = resolver.background();
     let default_fg = resolver.named(NamedColor::Foreground, false);
-    let ansi: [u32; 16] = std::array::from_fn(|index| resolver.color(Color::Indexed(index as u8), false));
+    let ansi: [u32; 16] =
+        std::array::from_fn(|index| resolver.color(Color::Indexed(index as u8), false));
     // 全屏程序（vim、htop）自己管颜色，不套高亮
-    let highlights = if content.mode.contains(TermMode::ALT_SCREEN) { &[] } else { highlights };
+    let highlights = if content.mode.contains(TermMode::ALT_SCREEN) {
+        &[]
+    } else {
+        highlights
+    };
     let cols = term.columns();
     let rows = term.screen_lines();
     let display_offset = content.display_offset;
@@ -222,7 +249,12 @@ pub fn build<T: EventListener>(
         let point = indexed.point;
         if current_line != Some(point.line) {
             if current_line.is_some() {
-                lines.push(finish_line(highlight::apply(std::mem::take(&mut runs), highlights, &ansi, default_fg)));
+                lines.push(finish_line(highlight::apply(
+                    std::mem::take(&mut runs),
+                    highlights,
+                    &ansi,
+                    default_fg,
+                )));
             }
             current_line = Some(point.line);
         }
@@ -251,7 +283,12 @@ pub fn build<T: EventListener>(
         if cell.flags.contains(Flags::ITALIC) {
             flags |= RUN_ITALIC;
         }
-        if cell.flags.intersects(Flags::UNDERLINE | Flags::DOUBLE_UNDERLINE | Flags::DOTTED_UNDERLINE | Flags::DASHED_UNDERLINE) {
+        if cell.flags.intersects(
+            Flags::UNDERLINE
+                | Flags::DOUBLE_UNDERLINE
+                | Flags::DOTTED_UNDERLINE
+                | Flags::DASHED_UNDERLINE,
+        ) {
             flags |= RUN_UNDERLINE;
         }
         if cell.flags.contains(Flags::UNDERCURL) {
@@ -271,7 +308,11 @@ pub fn build<T: EventListener>(
         }
 
         let wide = cell.flags.contains(Flags::WIDE_CHAR);
-        let character = if cell.flags.contains(Flags::LEADING_WIDE_CHAR_SPACER) { ' ' } else { cell.c };
+        let character = if cell.flags.contains(Flags::LEADING_WIDE_CHAR_SPACER) {
+            ' '
+        } else {
+            cell.c
+        };
         let character = if character == '\t' { ' ' } else { character };
         let zerowidth = cell.zerowidth();
         // 只有纯 ASCII 能并段：别的字符字体回退后宽度不一定等于格宽，单独定位才不会错位
@@ -281,7 +322,12 @@ pub fn build<T: EventListener>(
         if mergeable {
             if let Some(last) = runs.last_mut() {
                 let last_mergeable = last.width as usize == last.text.len() && last.text.is_ascii();
-                if last_mergeable && last.fg == fg && last.bg == bg && last.flags == flags && last.col + last.width == col {
+                if last_mergeable
+                    && last.fg == fg
+                    && last.bg == bg
+                    && last.flags == flags
+                    && last.col + last.width == col
+                {
                     last.text.push(character);
                     last.width += 1;
                     continue;
@@ -295,15 +341,26 @@ pub fn build<T: EventListener>(
             text.extend(extra.iter());
         }
         // 非 ASCII 单格字符宽度记 1，但 text.len()>1 字节，上面的 last_mergeable 会把它排除
-        runs.push(Run { col, width: if wide { 2 } else { 1 }, text, fg, bg, flags });
+        runs.push(Run {
+            col,
+            width: if wide { 2 } else { 1 },
+            text,
+            fg,
+            bg,
+            flags,
+        });
     }
     if current_line.is_some() {
-        lines.push(finish_line(highlight::apply(runs, highlights, &ansi, default_fg)));
+        lines.push(finish_line(highlight::apply(
+            runs, highlights, &ansi, default_fg,
+        )));
     }
 
     let cursor_point = content.cursor.point;
     let cursor_row = cursor_point.line.0 + display_offset as i32;
-    let visible = content.cursor.shape != CursorShape::Hidden && cursor_row >= 0 && (cursor_row as usize) < rows;
+    let visible = content.cursor.shape != CursorShape::Hidden
+        && cursor_row >= 0
+        && (cursor_row as usize) < rows;
     let shape = match content.cursor.shape {
         CursorShape::Underline => 1,
         CursorShape::Beam => 2,
@@ -347,7 +404,10 @@ fn finish_line(runs: Vec<Run>) -> FrameLine {
         run.bg.hash(&mut hasher);
         run.flags.hash(&mut hasher);
     }
-    FrameLine { hash: hasher.finish(), runs }
+    FrameLine {
+        hash: hasher.finish(),
+        runs,
+    }
 }
 
 #[cfg(test)]
@@ -383,7 +443,12 @@ mod tests {
     }
 
     fn render_with(output: &str, bold_is_bright: bool, highlights: &[Highlight]) -> Frame {
-        let size = WinSize { cols: 20, rows: 3, cell_width: 8, cell_height: 16 };
+        let size = WinSize {
+            cols: 20,
+            rows: 3,
+            cell_width: 8,
+            cell_height: 16,
+        };
         let mut term = Term::new(Config::default(), &size, VoidListener);
         let mut parser: Processor = Processor::new();
         parser.advance(&mut term, output.as_bytes());
@@ -394,14 +459,32 @@ mod tests {
     fn highlight_recolors_plain_text_only() {
         use crate::config::HighlightRule;
         let rules = [
-            HighlightRule { pattern: "err(or)?".into(), ignore_case: true, foreground: Some(1), ..HighlightRule::default() },
+            HighlightRule {
+                pattern: "err(or)?".into(),
+                ignore_case: true,
+                foreground: Some(1),
+                ..HighlightRule::default()
+            },
             // 与上一条重叠时靠前的优先
-            HighlightRule { pattern: "or".into(), foreground: Some(2), bold: true, ..HighlightRule::default() },
-            HighlightRule { pattern: "ok".into(), background: Some(4), ..HighlightRule::default() },
+            HighlightRule {
+                pattern: "or".into(),
+                foreground: Some(2),
+                bold: true,
+                ..HighlightRule::default()
+            },
+            HighlightRule {
+                pattern: "ok".into(),
+                background: Some(4),
+                ..HighlightRule::default()
+            },
         ];
         let highlights = crate::highlight::compile(&rules, false);
         let palette = Palette::default();
-        let frame = render_with("a ERROR b ok\r\n\x1b[32merror\x1b[0m for", true, &highlights);
+        let frame = render_with(
+            "a ERROR b ok\r\n\x1b[32merror\x1b[0m for",
+            true,
+            &highlights,
+        );
 
         let first = &frame.lines[0];
         assert_eq!(texts(first), ["a", "ERROR", " b", "ok"]);
@@ -463,7 +546,10 @@ mod tests {
 
     #[test]
     fn color_forms_resolve_to_rgb() {
-        let frame = render("\x1b[38;2;1;2;3mA\x1b[38;5;196mB\x1b[1;31mC\x1b[0;1;38;5;1mD", true);
+        let frame = render(
+            "\x1b[38;2;1;2;3mA\x1b[38;5;196mB\x1b[1;31mC\x1b[0;1;38;5;1mD",
+            true,
+        );
         let runs = &frame.lines[0].runs;
         let palette = Palette::default();
         assert_eq!(runs[0].fg, 0x010203);
@@ -481,10 +567,16 @@ mod tests {
         let palette = Palette::default();
         let frame = render("\x1b[7mI\x1b[0;8mH\x1b[0;4;9;3mU", true);
         let runs = &frame.lines[0].runs;
-        assert_eq!((runs[0].fg, runs[0].bg), (palette.background, palette.foreground));
+        assert_eq!(
+            (runs[0].fg, runs[0].bg),
+            (palette.background, palette.foreground)
+        );
         assert_eq!(runs[0].flags & RUN_DEFAULT_BG, 0);
         assert_eq!(runs[1].fg, runs[1].bg);
-        assert_eq!(runs[2].flags & (RUN_UNDERLINE | RUN_STRIKE | RUN_ITALIC), RUN_UNDERLINE | RUN_STRIKE | RUN_ITALIC);
+        assert_eq!(
+            runs[2].flags & (RUN_UNDERLINE | RUN_STRIKE | RUN_ITALIC),
+            RUN_UNDERLINE | RUN_STRIKE | RUN_ITALIC
+        );
     }
 
     #[test]

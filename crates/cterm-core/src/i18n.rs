@@ -37,6 +37,36 @@ pub fn trf_args(source: &str, args: &[(&str, &(dyn Display + Sync))]) -> String 
 
 fn english(source: &str) -> Option<&'static str> {
     let translated = match source {
+        "备用屏幕中的程序占用了终端，无法执行命令" => "An alternate-screen program occupies the terminal. Cannot execute a command.",
+        "{capability} 当前不在可确认的 shell 提示符" => "{capability} is not at a verified shell prompt",
+
+        "当前对话没有可用终端工具" => "This conversation has no available terminal tools",
+        "AI 工具调用格式无效" => "Invalid AI tool call format",
+        "AI 工具调用参数超过大小限制" => "AI tool arguments exceed the size limit",
+        "AI 工具调用响应未完整结束" => "AI tool call response was incomplete",
+        "一次只能请求一个终端命令" => "Only one terminal command can be requested at a time",
+        "AI 工具调用参数格式无效" => "Invalid AI tool arguments",
+        "AI 工具命令不能为空" => "AI tool command cannot be empty",
+        "对话工具调用关联无效" => "Invalid tool call association in conversation",
+        "对话消息格式无效" => "Invalid conversation message format",
+        "对话工具调用缺少关联结果" => "A tool call is missing its result",
+        "对话历史仅支持 user、assistant 和关联的 tool 消息" => "Conversation history supports only user, assistant, and associated tool messages",
+
+        "命令不能为空" => "Command cannot be empty",
+        "命令超过 4 KiB 限制" => "Command exceeds the 4 KiB limit",
+        "命令包含不允许的控制字符" => "Command contains disallowed control characters",
+        "调用 ID 不能为空" => "Call ID cannot be empty",
+        "终端会话已结束" => "Terminal session has ended",
+        "ZMODEM 传输期间不能执行命令" => "Cannot execute commands during a ZMODEM transfer",
+        "当前 shell 命令行有未提交输入，请先清空或提交后重试" => "The shell has unsubmitted input. Clear or submit it before retrying.",
+        "终端连接已关闭" => "Terminal connection is closed",
+        "此终端不支持 AI 命令执行" => "This terminal does not support AI command execution",
+        "该终端会话已有命令执行中" => "A command is already running in this terminal session",
+        "当前不在可确认的 shell 提示符" => "The terminal is not at a verified shell prompt",
+        "写入当前终端失败：{err}" => "Failed to write to the terminal: {err}",
+        "执行调用 ID 已失效" => "Execution call ID is no longer valid",
+        "目标终端已关闭，请重新发起请求" => "The target terminal was closed. Start a new request.",
+
         "无法启动 {command}：{err}" => "Failed to start {command}: {err}",
         "正在连接 {host}:{port} …" => "Connecting to {host}:{port} …",
         "连接 {host}:{port} 失败：{err}" => "Failed to connect to {host}:{port}: {err}",
@@ -137,7 +167,6 @@ fn english(source: &str) -> Option<&'static str> {
         "AI 响应超过大小限制" => "The AI response exceeds the size limit",
         "AI 响应格式无法识别" => "The AI response format is not recognized",
         "AI 响应中没有 assistant 文本" => "The AI response has no assistant text",
-        "对话消息格式无效" => "The chat message format is invalid",
         "对话消息数量必须为 1 到 {max}" => "The number of chat messages must be between 1 and {max}",
         "对话消息 role 仅支持 system、user、assistant" => "Chat message roles must be system, user, or assistant",
         "无法构造 AI 请求" => "Failed to construct the AI request",
@@ -197,12 +226,24 @@ mod tests {
     #[test]
     fn templates_and_fallback() {
         set_language("en");
-        assert_eq!(crate::trf!("连接 {host}:{port} 超时", host = "example.com", port = 22), "Connection to example.com:22 timed out");
-        assert_eq!(crate::trf!("AI 服务返回 HTTP {status}", status = 503), "AI service returned HTTP 503");
+        assert_eq!(
+            crate::trf!("连接 {host}:{port} 超时", host = "example.com", port = 22),
+            "Connection to example.com:22 timed out"
+        );
+        assert_eq!(
+            crate::trf!("AI 服务返回 HTTP {status}", status = 503),
+            "AI service returned HTTP 503"
+        );
         assert_eq!(tr("请先设置 AI 模型"), "Set an AI model first");
         assert_eq!(tr("没有翻译的句子"), "没有翻译的句子");
         set_language("zh");
-        assert_eq!(crate::trf!("连接 {host}:{port} 超时", host = "example.com", port = 22), "连接 example.com:22 超时");
-        assert_eq!(crate::trf!("AI 服务返回 HTTP {status}", status = 503), "AI 服务返回 HTTP 503");
+        assert_eq!(
+            crate::trf!("连接 {host}:{port} 超时", host = "example.com", port = 22),
+            "连接 example.com:22 超时"
+        );
+        assert_eq!(
+            crate::trf!("AI 服务返回 HTTP {status}", status = 503),
+            "AI 服务返回 HTTP 503"
+        );
     }
 }

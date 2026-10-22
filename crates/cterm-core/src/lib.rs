@@ -2,8 +2,9 @@
 
 #[macro_use]
 pub mod i18n;
-pub mod config;
 pub mod ai;
+pub mod ai_terminal;
+pub mod config;
 pub mod connect;
 pub mod frame;
 pub mod highlight;

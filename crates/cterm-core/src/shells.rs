@@ -109,7 +109,8 @@ pub fn detect() -> Vec<DetectedShell> {
         args: vec!["-nologo".into()],
         icon: "powershell".into(),
     });
-    let program_files = std::env::var("ProgramFiles").unwrap_or_else(|_| r"C:\Program Files".into());
+    let program_files =
+        std::env::var("ProgramFiles").unwrap_or_else(|_| r"C:\Program Files".into());
     let pwsh = format!(r"{program_files}\PowerShell\7\pwsh.exe");
     if Path::new(&pwsh).exists() {
         shells.push(DetectedShell {
@@ -130,11 +131,18 @@ pub fn detect() -> Vec<DetectedShell> {
             icon: "git".into(),
         });
     }
-    for (id, path) in [("msys2", r"C:\msys64\usr\bin\bash.exe"), ("cygwin", r"C:\cygwin64\bin\bash.exe")] {
+    for (id, path) in [
+        ("msys2", r"C:\msys64\usr\bin\bash.exe"),
+        ("cygwin", r"C:\cygwin64\bin\bash.exe"),
+    ] {
         if Path::new(path).exists() {
             shells.push(DetectedShell {
                 id: id.into(),
-                name: if id == "msys2" { "MSYS2".into() } else { "Cygwin".into() },
+                name: if id == "msys2" {
+                    "MSYS2".into()
+                } else {
+                    "Cygwin".into()
+                },
                 command: path.into(),
                 args: vec!["--login".into(), "-i".into()],
                 icon: "terminal".into(),
@@ -158,9 +166,15 @@ fn detect_wsl(system_root: &str) -> Vec<DetectedShell> {
         .args(["--list", "--quiet"])
         .creation_flags(CREATE_NO_WINDOW)
         .output();
-    let Ok(output) = output else { return Vec::new() };
+    let Ok(output) = output else {
+        return Vec::new();
+    };
     // wsl.exe 输出 UTF-16LE
-    let units: Vec<u16> = output.stdout.chunks_exact(2).map(|pair| u16::from_le_bytes([pair[0], pair[1]])).collect();
+    let units: Vec<u16> = output
+        .stdout
+        .chunks_exact(2)
+        .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+        .collect();
     let text = String::from_utf16_lossy(&units);
     let mut shells = Vec::new();
     for distro in text.lines() {
@@ -185,7 +199,8 @@ mod tests {
 
     #[test]
     fn etc_shells_dedup_and_login() {
-        let shells = parse_etc_shells("# comment\n/bin/zsh\n/bin/bash\n/usr/local/bin/zsh\n\n/bin/sh\n");
+        let shells =
+            parse_etc_shells("# comment\n/bin/zsh\n/bin/bash\n/usr/local/bin/zsh\n\n/bin/sh\n");
         let names: Vec<&str> = shells.iter().map(|shell| shell.name.as_str()).collect();
         assert_eq!(names, ["bash", "sh", "zsh"]);
         assert_eq!(shells[2].command, "/bin/zsh");
@@ -212,7 +227,14 @@ mod tests {
     #[test]
     fn unix_shell_from_path() {
         let shell = unix_shell("/usr/local/bin/zsh");
-        assert_eq!((shell.id.as_str(), shell.name.as_str(), shell.command.as_str()), ("zsh", "zsh", "/usr/local/bin/zsh"));
+        assert_eq!(
+            (
+                shell.id.as_str(),
+                shell.name.as_str(),
+                shell.command.as_str()
+            ),
+            ("zsh", "zsh", "/usr/local/bin/zsh")
+        );
         assert_eq!(unix_shell("nu").name, "nu");
         assert_eq!(path_style_of("cygwin"), PathStyle::Cygwin);
         assert_eq!(path_style_of("msys2"), PathStyle::Msys);

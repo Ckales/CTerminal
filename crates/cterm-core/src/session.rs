@@ -5,7 +5,7 @@ use std::io;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -38,6 +38,14 @@ pub trait Transport: Send {
     /// SSH 连接（SFTP 用），其他连接没有
     fn ssh(&self) -> Option<Arc<crate::ssh::SshShared>> {
         None
+    }
+    /// Human-readable shell capability shown in the command confirmation UI.
+    fn ai_shell_capability(&self) -> Option<String> {
+        None
+    }
+    /// Whether the existing connection is at a shell prompt where a command can be sent.
+    fn ai_shell_ready(&self) -> bool {
+        false
     }
 }
 
@@ -163,12 +171,28 @@ pub struct Session {
     history: Option<Arc<Mutex<History>>>,
     /// 本条命令的起点（第一次按键时的光标）：(行号 + 回看行数, 列)，回看增长时仍指向同一行
     anchor: Mutex<Option<(i32, usize)>>,
+    ai_execution: Mutex<Option<AiExecution>>,
+    ai_changed: Condvar,
+    /// Orders user input against AI command injection and blocks user input while capture runs.
+    ai_write_gate: Mutex<()>,
+    closed: AtomicBool,
+}
+
+struct AiExecution {
+    call_id: String,
+    capture: crate::ai_terminal::MarkerCapture,
+    done: bool,
+    detached: bool,
 }
 
 impl Session {
     /// 创建会话，返回会话本身和给连接层的输出通道。
     /// 连接层建好后调用 `attach` 挂上 Transport。
-    pub fn new(options: TermOptions, size: WinSize, sink: EventSink) -> (Arc<Session>, Sender<Output>) {
+    pub fn new(
+        options: TermOptions,
+        size: WinSize,
+        sink: EventSink,
+    ) -> (Arc<Session>, Sender<Output>) {
         let transport: SharedTransport = Arc::new(Mutex::new(None));
         let palette = Arc::new(Mutex::new(options.palette));
         let size_cell = Arc::new(Mutex::new(size));
@@ -185,7 +209,10 @@ impl Session {
         };
         let config = term::Config {
             scrolling_history: options.scrollback,
-            default_cursor_style: CursorStyle { shape, blinking: false },
+            default_cursor_style: CursorStyle {
+                shape,
+                blinking: false,
+            },
             semantic_escape_chars: options.word_separators.clone(),
             ..Default::default()
         };
@@ -207,6 +234,10 @@ impl Session {
             downloads_dir: Mutex::new(crate::paths::downloads_dir()),
             history: options.history,
             anchor: Mutex::new(None),
+            ai_execution: Mutex::new(None),
+            ai_changed: Condvar::new(),
+            ai_write_gate: Mutex::new(()),
+            closed: AtomicBool::new(false),
         });
 
         let (tx, rx) = mpsc::channel();
@@ -222,16 +253,24 @@ impl Session {
         *self.transport.lock().unwrap() = Some(transport);
     }
 
-    fn run_parser(&self, rx: Receiver<Output>, control: Receiver<zmodem::Control>, sink: EventSink) {
+    fn run_parser(
+        &self,
+        rx: Receiver<Output>,
+        control: Receiver<zmodem::Control>,
+        sink: EventSink,
+    ) {
         let mut parser: Processor = Processor::new();
         let mut detector = zmodem::Detector::default();
         loop {
             let received = match parser.sync_timeout().sync_timeout() {
-                Some(deadline) => rx.recv_timeout(deadline.saturating_duration_since(Instant::now())),
+                Some(deadline) => {
+                    rx.recv_timeout(deadline.saturating_duration_since(Instant::now()))
+                }
                 None => rx.recv().map_err(|_| RecvTimeoutError::Disconnected),
             };
             match received {
                 Ok(Output::Data(bytes)) => {
+                    self.observe_ai_output(&bytes);
                     let mut processed = bytes.len();
                     let mut closed = None;
                     let mut transfer;
@@ -242,8 +281,10 @@ impl Session {
                         while transfer.is_none() && processed < 1 << 16 {
                             match rx.try_recv() {
                                 Ok(Output::Data(more)) => {
+                                    self.observe_ai_output(&more);
                                     processed += more.len();
-                                    transfer = advance(&mut parser, &mut term, &mut detector, &more);
+                                    transfer =
+                                        advance(&mut parser, &mut term, &mut detector, &more);
                                 }
                                 Ok(Output::Closed(reason)) => {
                                     closed = Some(reason);
@@ -262,7 +303,14 @@ impl Session {
                     }
                     // 一条命令里连着几个 sz 时，上一个结束后的输出里可能紧跟下一个起始头
                     while let Some(start) = transfer {
-                        match self.run_transfer(&rx, &control, &sink, &mut parser, &mut detector, start) {
+                        match self.run_transfer(
+                            &rx,
+                            &control,
+                            &sink,
+                            &mut parser,
+                            &mut detector,
+                            start,
+                        ) {
                             Ok(next) => transfer = next,
                             Err(reason) => {
                                 self.finish(&mut parser, &sink, reason);
@@ -322,7 +370,11 @@ impl Session {
             if transfer.finished() {
                 break None;
             }
-            let wait = if transfer.busy() { Duration::ZERO } else { Duration::from_millis(100) };
+            let wait = if transfer.busy() {
+                Duration::ZERO
+            } else {
+                Duration::from_millis(100)
+            };
             match rx.recv_timeout(wait) {
                 Ok(Output::Data(bytes)) => transfer.input(&bytes),
                 Ok(Output::Closed(reason)) => {
@@ -357,10 +409,15 @@ impl Session {
         Ok(next)
     }
 
-    fn flush_transfer(&self, transfer: &mut zmodem::Transfer, parser: &mut Processor, sink: &EventSink) {
+    fn flush_transfer(
+        &self,
+        transfer: &mut zmodem::Transfer,
+        parser: &mut Processor,
+        sink: &EventSink,
+    ) {
         let wire = transfer.take_wire();
         if !wire.is_empty() {
-            self.write_transport(&wire);
+            let _ = self.write_transport(&wire);
         }
         let display = transfer.take_display();
         if !display.is_empty() {
@@ -370,6 +427,8 @@ impl Session {
     }
 
     fn finish(&self, parser: &mut Processor, sink: &EventSink, reason: String) {
+        self.closed.store(true, Ordering::Release);
+        self.finish_ai_execution();
         parser.stop_sync(&mut *self.term.lock());
         self.wake(sink);
         sink(SessionEvent::Exit(reason));
@@ -389,7 +448,13 @@ impl Session {
         let term = self.term.lock();
         let palette = self.palette.lock().unwrap();
         let highlights = self.highlights.lock().unwrap();
-        let mut frame = frame::build(&term, &palette, &highlights, current_match.as_ref(), self.bold_is_bright);
+        let mut frame = frame::build(
+            &term,
+            &palette,
+            &highlights,
+            current_match.as_ref(),
+            self.bold_is_bright,
+        );
         if let Some((commands, prefix, col)) = self.suggestions(&term) {
             frame.suggestions = commands;
             frame.suggestion_col = col;
@@ -399,6 +464,17 @@ impl Session {
     }
 
     pub fn write(&self, data: &[u8]) {
+        let _gate = self.ai_write_gate.lock().unwrap();
+        self.write_with_gate(data);
+    }
+
+    fn write_with_gate(&self, data: &[u8]) {
+        if self.ai_execution.lock().unwrap().is_some() {
+            if data == [0x03] {
+                let _ = self.write_transport(data);
+            }
+            return;
+        }
         // ZMODEM 传输期间键盘、鼠标、粘贴都不能进线路（会破坏协议）；Ctrl-C 取消传输
         if self.zmodem_active.load(Ordering::Acquire) {
             if data.contains(&0x03) {
@@ -406,12 +482,14 @@ impl Session {
             }
             return;
         }
-        self.write_transport(data);
+        let _ = self.write_transport(data);
     }
 
-    fn write_transport(&self, data: &[u8]) {
+    fn write_transport(&self, data: &[u8]) -> io::Result<()> {
         if let Some(transport) = self.transport.lock().unwrap().as_mut() {
-            let _ = transport.write(data);
+            transport.write(data)
+        } else {
+            Err(io::Error::other("terminal transport is closed"))
         }
     }
 
@@ -427,11 +505,18 @@ impl Session {
 
     /// 用户输入：输入前滚回底部
     pub fn input(&self, data: &[u8]) {
+        let _gate = self.ai_write_gate.lock().unwrap();
+        if self.ai_execution.lock().unwrap().is_some() {
+            if data == [0x03] {
+                let _ = self.write_transport(data);
+            }
+            return;
+        }
         if self.scroll_on_input {
             self.scroll_to_bottom_if_needed();
         }
         self.track_command(data);
-        self.write(data);
+        self.write_with_gate(data);
     }
 
     /// 第一次按键记下命令起点；回车时把起点到行尾的文字记进历史。
@@ -452,11 +537,20 @@ impl Session {
         if enter {
             if let Some(start) = anchor_point(&term, start) {
                 let end = term.line_search_right(cursor);
-                history.lock().unwrap().add(&term.bounds_to_string(start, end));
+                history
+                    .lock()
+                    .unwrap()
+                    .add(&term.bounds_to_string(start, end));
             }
         }
         // 回车、Ctrl-C / Ctrl-D / Ctrl-L 之后是新的一行；带换行的粘贴还没回显，读不到，不记
-        if enter || data.contains(&b'\r') || data.contains(&b'\n') || data == [0x03] || data == [0x04] || data == [0x0c] {
+        if enter
+            || data.contains(&b'\r')
+            || data.contains(&b'\n')
+            || data == [0x03]
+            || data == [0x04]
+            || data == [0x0c]
+        {
             *anchor = None;
         }
     }
@@ -491,7 +585,11 @@ impl Session {
         if commands.is_empty() {
             return None;
         }
-        let col = if start.line == cursor.line { start.column.0 as u16 } else { 0 };
+        let col = if start.line == cursor.line {
+            start.column.0 as u16
+        } else {
+            0
+        };
         Some((commands, typed, col))
     }
 
@@ -499,7 +597,9 @@ impl Session {
     pub fn accept_suggestion(&self, command: &str) -> bool {
         let rest = {
             let term = self.term.lock();
-            let Some((commands, typed, _)) = self.suggestions(&term) else { return false };
+            let Some((commands, typed, _)) = self.suggestions(&term) else {
+                return false;
+            };
             if !commands.iter().any(|candidate| candidate == command) {
                 return false;
             }
@@ -595,8 +695,162 @@ impl Session {
     }
 
     pub fn close(&self) {
+        self.closed.store(true, Ordering::Release);
+        self.finish_ai_execution();
         if let Some(mut transport) = self.transport.lock().unwrap().take() {
             transport.close();
+        }
+    }
+
+    /// Shell description for the user confirmation card. Local sessions are exposed only
+    /// while the original shell owns the PTY foreground process group.
+    pub fn ai_capability(&self) -> Option<String> {
+        if self.closed.load(Ordering::Acquire) {
+            return None;
+        }
+        let transport = self.transport.lock().unwrap();
+        let transport = transport.as_ref()?;
+        transport.ai_shell_capability()
+    }
+
+    /// Execute a user-confirmed command through this session's existing shell/connection.
+    /// A timed-out call remains exclusive until its marker arrives or the session closes.
+    pub fn ai_execute(&self, call_id: &str, command: &str) -> Result<String, String> {
+        if call_id.trim().is_empty() {
+            return Err(crate::i18n::tr("调用 ID 不能为空"));
+        }
+        if self.closed.load(Ordering::Acquire) {
+            return Err(crate::i18n::tr("终端会话已结束"));
+        }
+        if self.zmodem_active.load(Ordering::Acquire) {
+            return Err(crate::i18n::tr("ZMODEM 传输期间不能执行命令"));
+        }
+
+        let token = crate::ai_terminal::token();
+        let bytes = crate::ai_terminal::shell_command(command, &token)?;
+        let _gate = self.ai_write_gate.lock().unwrap();
+        // Read and release Term before locking execution to avoid inversion with
+        // the parser, which takes Term before observing AI output.
+        if self.term.lock().mode().contains(TermMode::ALT_SCREEN) {
+            return Err(crate::i18n::tr("备用屏幕中的程序占用了终端，无法执行命令"));
+        }
+        if self.closed.load(Ordering::Acquire) {
+            return Err(crate::i18n::tr("终端会话已结束"));
+        }
+        if self.anchor.lock().unwrap().is_some() {
+            return Err(crate::i18n::tr(
+                "当前 shell 命令行有未提交输入，请先清空或提交后重试",
+            ));
+        }
+        let ready_deadline = std::time::Instant::now() + Duration::from_millis(200);
+        loop {
+            let (capability, ready) = {
+                let transport = self.transport.lock().unwrap();
+                let transport = transport
+                    .as_ref()
+                    .ok_or_else(|| crate::i18n::tr("终端连接已关闭"))?;
+                let capability = transport
+                    .ai_shell_capability()
+                    .ok_or_else(|| crate::i18n::tr("此终端不支持 AI 命令执行"))?;
+                (capability, transport.ai_shell_ready())
+            };
+            if ready {
+                break;
+            }
+            if std::time::Instant::now() >= ready_deadline {
+                return Err(crate::trf!(
+                    "{capability} 当前不在可确认的 shell 提示符",
+                    capability = capability
+                ));
+            }
+            thread::sleep(Duration::from_millis(20));
+        };
+        let mut execution = self.ai_execution.lock().unwrap();
+        if execution.is_some() {
+            return Err(crate::i18n::tr("该终端会话已有命令执行中"));
+        }
+        *execution = Some(AiExecution {
+            call_id: call_id.to_string(),
+            capture: crate::ai_terminal::MarkerCapture::new(&token),
+            done: false,
+            detached: false,
+        });
+        if let Err(err) = self.write_transport(&bytes) {
+            *execution = None;
+            return Err(crate::trf!("写入当前终端失败：{err}", err = err));
+        }
+        drop(execution);
+        drop(_gate);
+
+        let deadline = std::time::Instant::now() + crate::ai_terminal::EXECUTION_TIMEOUT;
+        let mut execution = self.ai_execution.lock().unwrap();
+        loop {
+            let Some(active) = execution.as_mut() else {
+                return Ok(crate::ai_terminal::result_json(
+                    &crate::ai_terminal::MarkerCapture::default(),
+                    "closed",
+                ));
+            };
+            if active.call_id != call_id {
+                return Err(crate::i18n::tr("执行调用 ID 已失效"));
+            }
+            if active.done {
+                let status = if active.capture.finished() {
+                    "completed"
+                } else {
+                    "closed"
+                };
+                let result = crate::ai_terminal::result_json(&active.capture, status);
+                *execution = None;
+                return Ok(result);
+            }
+            let now = std::time::Instant::now();
+            if now >= deadline {
+                active.detached = true;
+                return Ok(crate::ai_terminal::result_json(&active.capture, "timeout"));
+            }
+            let (guard, _) = self
+                .ai_changed
+                .wait_timeout(execution, deadline - now)
+                .unwrap();
+            execution = guard;
+        }
+    }
+
+    /// Interrupt only the active invocation whose ID matches the caller.
+    pub fn ai_cancel(&self, call_id: &str) {
+        let _gate = self.ai_write_gate.lock().unwrap();
+        let execution = self.ai_execution.lock().unwrap();
+        if execution
+            .as_ref()
+            .is_some_and(|active| active.call_id == call_id && !active.done)
+        {
+            let _ = self.write_transport(&[0x03]);
+        }
+    }
+
+    fn observe_ai_output(&self, bytes: &[u8]) {
+        let mut execution = self.ai_execution.lock().unwrap();
+        let Some(active) = execution.as_mut() else {
+            return;
+        };
+        if active.capture.feed(bytes) {
+            active.done = true;
+            self.ai_changed.notify_all();
+            if active.detached {
+                *execution = None;
+            }
+        }
+    }
+
+    fn finish_ai_execution(&self) {
+        let mut execution = self.ai_execution.lock().unwrap();
+        if let Some(active) = execution.as_mut() {
+            active.done = true;
+            self.ai_changed.notify_all();
+            if active.detached {
+                *execution = None;
+            }
         }
     }
 
@@ -681,7 +935,9 @@ impl Session {
         }
         let start = Point::new(line, Column(0));
         let end = Point::new(line, term.last_column());
-        term.bounds_to_string(start, end).trim_end_matches('\n').to_string()
+        term.bounds_to_string(start, end)
+            .trim_end_matches('\n')
+            .to_string()
     }
 
     // ---------- 搜索 ----------
@@ -696,10 +952,16 @@ impl Session {
         let mut regex = RegexSearch::new(pattern).map_err(|err| err.to_string())?;
         let mut term = self.term.lock();
         let previous = guard.take();
-        let direction = if backwards { Direction::Left } else { Direction::Right };
+        let direction = if backwards {
+            Direction::Left
+        } else {
+            Direction::Right
+        };
         let origin = match &previous {
             // 同一关键词再搜 = 下一个 / 上一个：从当前命中外侧一格开始（search_next 含起点，否则原地命中）
-            Some((last, found)) if last == pattern && backwards => found.start().sub(&*term, Boundary::None, 1),
+            Some((last, found)) if last == pattern && backwards => {
+                found.start().sub(&*term, Boundary::None, 1)
+            }
             Some((last, found)) if last == pattern => found.end().add(&*term, Boundary::None, 1),
             // 关键词变了（边输入边搜）：从当前命中处重新找，仍能匹配就留在原处
             Some((_, found)) if backwards => *found.start(),
@@ -707,11 +969,22 @@ impl Session {
             None => {
                 // 首次搜索从视口底部往上找，先命中最近的输出
                 let offset = term.grid().display_offset() as i32;
-                Point::new(Line(term.screen_lines() as i32 - 1 - offset), term.last_column())
+                Point::new(
+                    Line(term.screen_lines() as i32 - 1 - offset),
+                    term.last_column(),
+                )
             }
         };
-        let direction = if previous.is_none() { Direction::Left } else { direction };
-        let side = if direction == Direction::Right { Side::Right } else { Side::Left };
+        let direction = if previous.is_none() {
+            Direction::Left
+        } else {
+            direction
+        };
+        let side = if direction == Direction::Right {
+            Side::Right
+        } else {
+            Side::Left
+        };
         let found = term.search_next(&mut regex, origin, direction, side, None);
         if let Some(found) = &found {
             term.scroll_to_point(*found.start());
@@ -731,7 +1004,12 @@ impl Session {
 }
 
 /// 输出交给终端解析；遇到 ZMODEM 起始头时只解析它之前的部分，返回传输起点
-fn advance(parser: &mut Processor, term: &mut Term<Listener>, detector: &mut zmodem::Detector, bytes: &[u8]) -> Option<zmodem::Start> {
+fn advance(
+    parser: &mut Processor,
+    term: &mut Term<Listener>,
+    detector: &mut zmodem::Detector,
+    bytes: &[u8],
+) -> Option<zmodem::Start> {
     let (shown, start) = detector.scan(bytes);
     parser.advance(term, shown);
     start
@@ -793,7 +1071,12 @@ mod tests {
         fn close(&mut self) {}
     }
 
-    const SIZE: WinSize = WinSize { cols: 20, rows: 5, cell_width: 8, cell_height: 16 };
+    const SIZE: WinSize = WinSize {
+        cols: 20,
+        rows: 5,
+        cell_width: 8,
+        cell_height: 16,
+    };
 
     struct Harness {
         session: Arc<Session>,
@@ -822,16 +1105,31 @@ mod tests {
             let (session, tx) = Session::new(options, SIZE, sink);
             let written = Arc::new(Mutex::new(Vec::new()));
             let sizes = Arc::new(Mutex::new(Vec::new()));
-            session.attach(Box::new(Recorder { written: written.clone(), sizes: sizes.clone() }));
-            Harness { session, tx, events, written, sizes }
+            session.attach(Box::new(Recorder {
+                written: written.clone(),
+                sizes: sizes.clone(),
+            }));
+            Harness {
+                session,
+                tx,
+                events,
+                written,
+                sizes,
+            }
         }
 
         /// 喂一段输出，等解析线程发出 Wakeup 后拉一帧（重置 Wakeup）；返回期间的其他事件
         fn feed(&self, text: &str) -> Vec<SessionEvent> {
-            self.tx.send(Output::Data(text.as_bytes().to_vec())).unwrap();
+            self.tx
+                .send(Output::Data(text.as_bytes().to_vec()))
+                .unwrap();
             let mut others = Vec::new();
             loop {
-                match self.events.recv_timeout(Duration::from_secs(5)).expect("parser should wake") {
+                match self
+                    .events
+                    .recv_timeout(Duration::from_secs(5))
+                    .expect("parser should wake")
+                {
                     SessionEvent::Wakeup => break,
                     other => others.push(other),
                 }
@@ -847,7 +1145,10 @@ mod tests {
         /// 当前高亮的搜索命中在哪一行
         fn match_row(&self) -> Option<usize> {
             let frame = self.session.frame();
-            frame.lines.iter().position(|line| line.runs.iter().any(|run| run.flags & RUN_MATCH != 0))
+            frame
+                .lines
+                .iter()
+                .position(|line| line.runs.iter().any(|run| run.flags & RUN_MATCH != 0))
         }
     }
 
@@ -902,8 +1203,16 @@ mod tests {
     fn keys_paste_and_terminal_replies_go_to_transport() {
         let harness = Harness::new();
         let session = &harness.session;
-        assert!(session.key(&KeyInput { key: "Enter".into(), ..Default::default() }));
-        assert!(!session.key(&KeyInput { key: "c".into(), text: "c".into(), mods: input::MOD_META, alt_is_meta: false }));
+        assert!(session.key(&KeyInput {
+            key: "Enter".into(),
+            ..Default::default()
+        }));
+        assert!(!session.key(&KeyInput {
+            key: "c".into(),
+            text: "c".into(),
+            mods: input::MOD_META,
+            alt_is_meta: false
+        }));
         assert_eq!(harness.take_written(), b"\r");
         session.paste("a\nb");
         assert_eq!(harness.take_written(), b"a\rb");
@@ -968,12 +1277,24 @@ mod tests {
         assert_eq!(events, [SessionEvent::Title("hello".into())]);
 
         harness.tx.send(Output::Data(b"a".to_vec())).unwrap();
-        assert_eq!(harness.events.recv_timeout(Duration::from_secs(5)).unwrap(), SessionEvent::Wakeup);
+        assert_eq!(
+            harness.events.recv_timeout(Duration::from_secs(5)).unwrap(),
+            SessionEvent::Wakeup
+        );
         harness.tx.send(Output::Data(b"b".to_vec())).unwrap();
-        assert!(harness.events.recv_timeout(Duration::from_millis(200)).is_err(), "no second wakeup before frame()");
+        assert!(
+            harness
+                .events
+                .recv_timeout(Duration::from_millis(200))
+                .is_err(),
+            "no second wakeup before frame()"
+        );
         harness.session.frame();
         harness.tx.send(Output::Data(b"c".to_vec())).unwrap();
-        assert_eq!(harness.events.recv_timeout(Duration::from_secs(5)).unwrap(), SessionEvent::Wakeup);
+        assert_eq!(
+            harness.events.recv_timeout(Duration::from_secs(5)).unwrap(),
+            SessionEvent::Wakeup
+        );
 
         harness.session.frame();
         harness.tx.send(Output::Closed("bye".into())).unwrap();
@@ -1027,7 +1348,14 @@ mod tests {
         harness.feed("^C\r\n$ ");
         assert!(session.frame().suggestions.is_empty());
         assert!(!session.accept_suggestion("git status"));
-        assert!(session.history.as_ref().unwrap().lock().unwrap().suggest("h", 8).is_empty());
+        assert!(session
+            .history
+            .as_ref()
+            .unwrap()
+            .lock()
+            .unwrap()
+            .suggest("h", 8)
+            .is_empty());
     }
 
     #[test]

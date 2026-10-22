@@ -12,9 +12,12 @@ use cterm_core::connect;
 use cterm_core::session::{screen_text, Session, SessionEvent, WinSize};
 use cterm_core::sftp::Sftp;
 use cterm_core::ssh::RUNTIME;
-use russh_sftp::protocol::{Attrs, Data, File as SftpFile, FileAttributes, Handle, Name, OpenFlags, Status, StatusCode, Version};
 use russh::server::{self, Auth, Msg, Server as _, Session as ServerSession};
 use russh::{Channel, ChannelId};
+use russh_sftp::protocol::{
+    Attrs, Data, File as SftpFile, FileAttributes, Handle, Name, OpenFlags, Status, StatusCode,
+    Version,
+};
 
 #[derive(Clone, Default)]
 struct TestServer {
@@ -43,18 +46,31 @@ impl server::Handler for TestServer {
         Ok(Auth::reject())
     }
 
-    async fn channel_open_session(&mut self, channel: Channel<Msg>, reply: server::ChannelOpenHandle, _session: &mut ServerSession) -> Result<(), Self::Error> {
+    async fn channel_open_session(
+        &mut self,
+        channel: Channel<Msg>,
+        reply: server::ChannelOpenHandle,
+        _session: &mut ServerSession,
+    ) -> Result<(), Self::Error> {
         self.channels.lock().unwrap().insert(channel.id(), channel);
         reply.accept().await;
         Ok(())
     }
 
-    async fn subsystem_request(&mut self, channel_id: ChannelId, name: &str, session: &mut ServerSession) -> Result<(), Self::Error> {
+    async fn subsystem_request(
+        &mut self,
+        channel_id: ChannelId,
+        name: &str,
+        session: &mut ServerSession,
+    ) -> Result<(), Self::Error> {
         let channel = self.channels.lock().unwrap().remove(&channel_id);
         match (name, channel) {
             ("sftp", Some(channel)) => {
                 session.channel_success(channel_id)?;
-                let handler = FsSftp { root: self.sftp_root.clone(), ..Default::default() };
+                let handler = FsSftp {
+                    root: self.sftp_root.clone(),
+                    ..Default::default()
+                };
                 tokio::spawn(russh_sftp::server::run(channel.into_stream(), handler));
             }
             _ => session.channel_failure(channel_id)?,
@@ -90,13 +106,22 @@ impl server::Handler for TestServer {
         Ok(())
     }
 
-    async fn shell_request(&mut self, channel: ChannelId, session: &mut ServerSession) -> Result<(), Self::Error> {
+    async fn shell_request(
+        &mut self,
+        channel: ChannelId,
+        session: &mut ServerSession,
+    ) -> Result<(), Self::Error> {
         self.shells.lock().unwrap().push(channel);
         session.data(channel, b"welcome to test\r\n$ ".to_vec())?;
         Ok(())
     }
 
-    async fn data(&mut self, channel: ChannelId, data: &[u8], session: &mut ServerSession) -> Result<(), Self::Error> {
+    async fn data(
+        &mut self,
+        channel: ChannelId,
+        data: &[u8],
+        session: &mut ServerSession,
+    ) -> Result<(), Self::Error> {
         if !self.shells.lock().unwrap().contains(&channel) {
             return Ok(());
         }
@@ -118,15 +143,21 @@ fn start_server() -> (u16, TestServer) {
 }
 
 fn start_server_with_root(sftp_root: PathBuf) -> (u16, TestServer) {
-    let server = TestServer { sftp_root, ..Default::default() };
-    let key = russh::keys::PrivateKey::random(&mut rand::rng(), russh::keys::Algorithm::Ed25519).unwrap();
+    let server = TestServer {
+        sftp_root,
+        ..Default::default()
+    };
+    let key =
+        russh::keys::PrivateKey::random(&mut rand::rng(), russh::keys::Algorithm::Ed25519).unwrap();
     let config = Arc::new(server::Config {
         keys: vec![key],
         auth_rejection_time: Duration::from_millis(10),
         auth_rejection_time_initial: Some(Duration::from_millis(0)),
         ..Default::default()
     });
-    let listener = RUNTIME.block_on(tokio::net::TcpListener::bind(("127.0.0.1", 0))).unwrap();
+    let listener = RUNTIME
+        .block_on(tokio::net::TcpListener::bind(("127.0.0.1", 0)))
+        .unwrap();
     let port = listener.local_addr().unwrap().port();
     let mut running = server.clone();
     RUNTIME.spawn(async move {
@@ -146,7 +177,11 @@ impl Client {
     }
 
     /// customize：在默认的测试 SSH 选项上再改几项
-    fn open_with(port: u16, known_hosts: &std::path::Path, customize: impl FnOnce(&mut SshOptions)) -> Client {
+    fn open_with(
+        port: u16,
+        known_hosts: &std::path::Path,
+        customize: impl FnOnce(&mut SshOptions),
+    ) -> Client {
         let mut options = SshOptions {
             host: "127.0.0.1".into(),
             port,
@@ -169,7 +204,12 @@ impl Client {
         let sink = Arc::new(move |event: SessionEvent| {
             let _ = tx.send(event);
         });
-        let size = WinSize { cols: 80, rows: 24, cell_width: 8, cell_height: 16 };
+        let size = WinSize {
+            cols: 80,
+            rows: 24,
+            cell_width: 8,
+            cell_height: 16,
+        };
         let session = connect::open(&profile, &config, size, sink);
         Client { session, events }
     }
@@ -196,7 +236,9 @@ impl Client {
     fn wait_exit(&self) -> String {
         let deadline = Instant::now() + Duration::from_secs(10);
         while Instant::now() < deadline {
-            if let Ok(SessionEvent::Exit(reason)) = self.events.recv_timeout(Duration::from_millis(100)) {
+            if let Ok(SessionEvent::Exit(reason)) =
+                self.events.recv_timeout(Duration::from_millis(100))
+            {
                 return reason;
             }
         }
@@ -228,10 +270,19 @@ fn unknown_host_then_password_retry_then_shell() {
     client.wait_for("hello 世界");
     assert!(!client.screen().contains("s3cret"), "密码不能回显到屏幕上");
 
-    client.session.resize(WinSize { cols: 100, rows: 30, cell_width: 8, cell_height: 16 });
+    client.session.resize(WinSize {
+        cols: 100,
+        rows: 30,
+        cell_width: 8,
+        cell_height: 16,
+    });
     let deadline = Instant::now() + Duration::from_secs(5);
     while !server.sizes.lock().unwrap().contains(&(100, 30)) {
-        assert!(Instant::now() < deadline, "服务器没收到窗口变化：{:?}", server.sizes.lock().unwrap());
+        assert!(
+            Instant::now() < deadline,
+            "服务器没收到窗口变化：{:?}",
+            server.sizes.lock().unwrap()
+        );
         std::thread::sleep(Duration::from_millis(20));
     }
     assert_eq!(server.sizes.lock().unwrap()[0], (80, 24));
@@ -240,7 +291,12 @@ fn unknown_host_then_password_retry_then_shell() {
     assert_eq!(client.wait_exit(), "");
 
     let recorded = std::fs::read_to_string(&known_hosts).unwrap();
-    assert!(recorded.trim_start().starts_with(&format!("[127.0.0.1]:{port} ssh-ed25519 ")), "{recorded}");
+    assert!(
+        recorded
+            .trim_start()
+            .starts_with(&format!("[127.0.0.1]:{port} ssh-ed25519 ")),
+        "{recorded}"
+    );
 
     // 第二次连接：主机已知，不再提问，直接到密码
     let again = Client::open(port, &known_hosts);
@@ -258,8 +314,16 @@ fn changed_host_key_warns_and_defaults_to_refuse() {
     std::fs::create_dir_all(&dir).unwrap();
     let known_hosts = dir.join("known_hosts");
     // 记录一个别的密钥，模拟服务器密钥被替换
-    let other = russh::keys::PrivateKey::random(&mut rand::rng(), russh::keys::Algorithm::Ed25519).unwrap();
-    std::fs::write(&known_hosts, format!("[127.0.0.1]:{port} {}\n", other.public_key().to_openssh().unwrap())).unwrap();
+    let other =
+        russh::keys::PrivateKey::random(&mut rand::rng(), russh::keys::Algorithm::Ed25519).unwrap();
+    std::fs::write(
+        &known_hosts,
+        format!(
+            "[127.0.0.1]:{port} {}\n",
+            other.public_key().to_openssh().unwrap()
+        ),
+    )
+    .unwrap();
 
     let client = Client::open(port, &known_hosts);
     client.wait_for("密钥已变更");
@@ -279,7 +343,12 @@ struct FsSftp {
 }
 
 fn ok(id: u32) -> Status {
-    Status { id, status_code: StatusCode::Ok, error_message: "Ok".into(), language_tag: "en-US".into() }
+    Status {
+        id,
+        status_code: StatusCode::Ok,
+        error_message: "Ok".into(),
+        language_tag: "en-US".into(),
+    }
 }
 
 fn io_status(err: std::io::Error) -> StatusCode {
@@ -307,29 +376,49 @@ impl russh_sftp::server::Handler for FsSftp {
         StatusCode::OpUnsupported
     }
 
-    async fn init(&mut self, _version: u32, _extensions: HashMap<String, String>) -> Result<Version, Self::Error> {
+    async fn init(
+        &mut self,
+        _version: u32,
+        _extensions: HashMap<String, String>,
+    ) -> Result<Version, Self::Error> {
         Ok(Version::new())
     }
 
     async fn realpath(&mut self, id: u32, path: String) -> Result<Name, Self::Error> {
-        let path = if path == "." || path.is_empty() { "/".to_string() } else { path };
-        Ok(Name { id, files: vec![SftpFile::dummy(path)] })
+        let path = if path == "." || path.is_empty() {
+            "/".to_string()
+        } else {
+            path
+        };
+        Ok(Name {
+            id,
+            files: vec![SftpFile::dummy(path)],
+        })
     }
 
     async fn stat(&mut self, id: u32, path: String) -> Result<Attrs, Self::Error> {
         let metadata = std::fs::metadata(self.local(&path)).map_err(io_status)?;
-        Ok(Attrs { id, attrs: FileAttributes::from(&metadata) })
+        Ok(Attrs {
+            id,
+            attrs: FileAttributes::from(&metadata),
+        })
     }
 
     async fn lstat(&mut self, id: u32, path: String) -> Result<Attrs, Self::Error> {
         let metadata = std::fs::symlink_metadata(self.local(&path)).map_err(io_status)?;
-        Ok(Attrs { id, attrs: FileAttributes::from(&metadata) })
+        Ok(Attrs {
+            id,
+            attrs: FileAttributes::from(&metadata),
+        })
     }
 
     async fn fstat(&mut self, id: u32, handle: String) -> Result<Attrs, Self::Error> {
         let file = self.files.get(&handle).ok_or(StatusCode::Failure)?;
         let metadata = file.metadata().map_err(io_status)?;
-        Ok(Attrs { id, attrs: FileAttributes::from(&metadata) })
+        Ok(Attrs {
+            id,
+            attrs: FileAttributes::from(&metadata),
+        })
     }
 
     async fn opendir(&mut self, id: u32, path: String) -> Result<Handle, Self::Error> {
@@ -343,16 +432,27 @@ impl russh_sftp::server::Handler for FsSftp {
     }
 
     async fn readdir(&mut self, id: u32, handle: String) -> Result<Name, Self::Error> {
-        let Some(local) = self.dirs.get_mut(&handle).and_then(Option::take) else { return Err(StatusCode::Eof) };
+        let Some(local) = self.dirs.get_mut(&handle).and_then(Option::take) else {
+            return Err(StatusCode::Eof);
+        };
         let mut files = Vec::new();
         for entry in std::fs::read_dir(local).map_err(io_status)?.flatten() {
             let metadata = entry.metadata().map_err(io_status)?;
-            files.push(SftpFile::new(entry.file_name().to_string_lossy(), FileAttributes::from(&metadata)));
+            files.push(SftpFile::new(
+                entry.file_name().to_string_lossy(),
+                FileAttributes::from(&metadata),
+            ));
         }
         Ok(Name { id, files })
     }
 
-    async fn open(&mut self, id: u32, filename: String, flags: OpenFlags, _attrs: FileAttributes) -> Result<Handle, Self::Error> {
+    async fn open(
+        &mut self,
+        id: u32,
+        filename: String,
+        flags: OpenFlags,
+        _attrs: FileAttributes,
+    ) -> Result<Handle, Self::Error> {
         let file = std::fs::OpenOptions::new()
             .read(flags.contains(OpenFlags::READ) || !flags.contains(OpenFlags::WRITE))
             .write(flags.contains(OpenFlags::WRITE))
@@ -365,7 +465,13 @@ impl russh_sftp::server::Handler for FsSftp {
         Ok(Handle { id, handle })
     }
 
-    async fn read(&mut self, id: u32, handle: String, offset: u64, len: u32) -> Result<Data, Self::Error> {
+    async fn read(
+        &mut self,
+        id: u32,
+        handle: String,
+        offset: u64,
+        len: u32,
+    ) -> Result<Data, Self::Error> {
         let file = self.files.get_mut(&handle).ok_or(StatusCode::Failure)?;
         file.seek(SeekFrom::Start(offset)).map_err(io_status)?;
         let mut data = vec![0u8; len as usize];
@@ -377,7 +483,13 @@ impl russh_sftp::server::Handler for FsSftp {
         Ok(Data { id, data })
     }
 
-    async fn write(&mut self, id: u32, handle: String, offset: u64, data: Vec<u8>) -> Result<Status, Self::Error> {
+    async fn write(
+        &mut self,
+        id: u32,
+        handle: String,
+        offset: u64,
+        data: Vec<u8>,
+    ) -> Result<Status, Self::Error> {
         let file = self.files.get_mut(&handle).ok_or(StatusCode::Failure)?;
         file.seek(SeekFrom::Start(offset)).map_err(io_status)?;
         file.write_all(&data).map_err(io_status)?;
@@ -390,7 +502,12 @@ impl russh_sftp::server::Handler for FsSftp {
         Ok(ok(id))
     }
 
-    async fn mkdir(&mut self, id: u32, path: String, _attrs: FileAttributes) -> Result<Status, Self::Error> {
+    async fn mkdir(
+        &mut self,
+        id: u32,
+        path: String,
+        _attrs: FileAttributes,
+    ) -> Result<Status, Self::Error> {
         std::fs::create_dir(self.local(&path)).map_err(io_status)?;
         Ok(ok(id))
     }
@@ -405,7 +522,12 @@ impl russh_sftp::server::Handler for FsSftp {
         Ok(ok(id))
     }
 
-    async fn rename(&mut self, id: u32, oldpath: String, newpath: String) -> Result<Status, Self::Error> {
+    async fn rename(
+        &mut self,
+        id: u32,
+        oldpath: String,
+        newpath: String,
+    ) -> Result<Status, Self::Error> {
         std::fs::rename(self.local(&oldpath), self.local(&newpath)).map_err(io_status)?;
         Ok(ok(id))
     }
@@ -450,18 +572,31 @@ fn sftp_list_upload_download_rename_remove() {
     assert_eq!(entries[1].size, "你好 sftp".len() as u64);
 
     let downloaded = local.join("hello.txt");
-    sftp.download("/hello.txt", &downloaded, &|_, _| {}).unwrap();
+    sftp.download("/hello.txt", &downloaded, &|_, _| {})
+        .unwrap();
     assert_eq!(std::fs::read_to_string(&downloaded).unwrap(), "你好 sftp");
     assert!(!local.join("hello.txt.part").exists());
 
     let last = Arc::new(Mutex::new((0u64, 0u64)));
     let recorder = last.clone();
-    sftp.upload(&local.join("upload.bin"), "/docs/upload.bin", &move |done, total| *recorder.lock().unwrap() = (done, total)).unwrap();
+    sftp.upload(
+        &local.join("upload.bin"),
+        "/docs/upload.bin",
+        &move |done, total| *recorder.lock().unwrap() = (done, total),
+    )
+    .unwrap();
     assert_eq!(*last.lock().unwrap(), (600_000, 600_000));
-    assert_eq!(std::fs::read(remote_root.join("docs/upload.bin")).unwrap(), vec![7u8; 600_000]);
+    assert_eq!(
+        std::fs::read(remote_root.join("docs/upload.bin")).unwrap(),
+        vec![7u8; 600_000]
+    );
 
-    sftp.upload(&local.join("folder"), "/folder", &|_, _| {}).unwrap();
-    assert_eq!(std::fs::read_to_string(remote_root.join("folder/inner/deep.txt")).unwrap(), "deep");
+    sftp.upload(&local.join("folder"), "/folder", &|_, _| {})
+        .unwrap();
+    assert_eq!(
+        std::fs::read_to_string(remote_root.join("folder/inner/deep.txt")).unwrap(),
+        "deep"
+    );
 
     sftp.rename("/hello.txt", "/renamed.txt").unwrap();
     assert!(remote_root.join("renamed.txt").exists());
@@ -483,7 +618,10 @@ fn sftp_list_upload_download_rename_remove() {
 #[test]
 fn proxy_command_carries_the_connection_and_is_reaped() {
     // 需要 nc：macOS 与常见 Linux 发行版自带；没有时跳过（Windows 上整个测试不编译）
-    let has_nc = std::process::Command::new("sh").args(["-c", "command -v nc"]).output().is_ok_and(|output| output.status.success());
+    let has_nc = std::process::Command::new("sh")
+        .args(["-c", "command -v nc"])
+        .output()
+        .is_ok_and(|output| output.status.success());
     if !has_nc {
         eprintln!("跳过：找不到 nc");
         return;
@@ -497,7 +635,10 @@ fn proxy_command_carries_the_connection_and_is_reaped() {
     let client = Client::open_with(port, &dir.join("known_hosts"), |options| {
         options.host = "proxy-target.example.com".into();
         // nc 结束后这个 sh 还要 sleep 30 秒：只有被主动杀掉，它才会立即消失
-        options.proxy_command = format!("sh -c 'echo $$ > {}; echo via-proxy %r@%h >&2; nc 127.0.0.1 %p; sleep 30'", pid_file.display());
+        options.proxy_command = format!(
+            "sh -c 'echo $$ > {}; echo via-proxy %r@%h >&2; nc 127.0.0.1 %p; sleep 30'",
+            pid_file.display()
+        );
     });
     client.wait_for("via-proxy tester@proxy-target.example.com");
     client.wait_for("无法确认主机 proxy-target.example.com");
@@ -510,11 +651,20 @@ fn proxy_command_carries_the_connection_and_is_reaped() {
     client.type_line("bye");
     assert_eq!(client.wait_exit(), "");
 
-    let pid = std::fs::read_to_string(&pid_file).unwrap().trim().to_string();
+    let pid = std::fs::read_to_string(&pid_file)
+        .unwrap()
+        .trim()
+        .to_string();
     drop(client);
     // kill -0 对僵尸进程也会成功，失败才说明进程已被回收
     let deadline = Instant::now() + Duration::from_secs(5);
-    while std::process::Command::new("kill").args(["-0", &pid]).stderr(std::process::Stdio::null()).status().unwrap().success() {
+    while std::process::Command::new("kill")
+        .args(["-0", &pid])
+        .stderr(std::process::Stdio::null())
+        .status()
+        .unwrap()
+        .success()
+    {
         assert!(Instant::now() < deadline, "代理子进程 {pid} 没有被回收");
         std::thread::sleep(Duration::from_millis(50));
     }

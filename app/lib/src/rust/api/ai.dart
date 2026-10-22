@@ -40,6 +40,36 @@ Future<String> aiChat({
   context: context,
 );
 
+/// 工具模式始终绑定发起请求的终端 id，UI 只展示确认和传回结果。
+Stream<AiChatEvent> aiAgentStream({
+  required int requestId,
+  required String presetId,
+  required String messagesJson,
+  required String context,
+  required int terminalId,
+}) => RustLib.instance.api.crateApiAiAiAgentStream(
+  requestId: requestId,
+  presetId: presetId,
+  messagesJson: messagesJson,
+  context: context,
+  terminalId: terminalId,
+);
+
+Future<String> aiToolExecute({
+  required int terminalId,
+  required String callId,
+  required String command,
+}) => RustLib.instance.api.crateApiAiAiToolExecute(
+  terminalId: terminalId,
+  callId: callId,
+  command: command,
+);
+
+void aiToolCancel({required int terminalId, required String callId}) => RustLib
+    .instance
+    .api
+    .crateApiAiAiToolCancel(terminalId: terminalId, callId: callId);
+
 class AiChatEvent {
   final String kind;
   final String text;

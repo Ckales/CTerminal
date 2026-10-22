@@ -20,7 +20,10 @@ impl History {
             Ok(text) => text.lines().map(str::to_string).collect(),
             Err(_) => Vec::new(),
         };
-        History { path: Some(path), entries }
+        History {
+            path: Some(path),
+            entries,
+        }
     }
 
     /// 记一条命令：重复的挪到最新，超出上限丢最旧的
@@ -65,8 +68,11 @@ impl History {
     }
 }
 
-static SHARED: LazyLock<Arc<Mutex<History>>> =
-    LazyLock::new(|| Arc::new(Mutex::new(History::load(crate::paths::config_dir().join("history.txt")))));
+static SHARED: LazyLock<Arc<Mutex<History>>> = LazyLock::new(|| {
+    Arc::new(Mutex::new(History::load(
+        crate::paths::config_dir().join("history.txt"),
+    )))
+});
 
 /// 所有会话共用的一份历史
 pub fn shared() -> Arc<Mutex<History>> {
@@ -98,9 +104,15 @@ mod tests {
         let mut history = History::default();
         history.add("cd Work/dev/aiproxy");
         history.add("cd Work/dev/api");
-        assert_eq!(history.suggest("cd Work/dev/a", 8), ["cd Work/dev/api", "cd Work/dev/aiproxy"]);
+        assert_eq!(
+            history.suggest("cd Work/dev/a", 8),
+            ["cd Work/dev/api", "cd Work/dev/aiproxy"]
+        );
         assert_eq!(history.suggest("cd Work/dev/a", 1), ["cd Work/dev/api"]);
-        assert_eq!(history.suggest("cd Work/dev/ai", 8), ["cd Work/dev/aiproxy"]);
+        assert_eq!(
+            history.suggest("cd Work/dev/ai", 8),
+            ["cd Work/dev/aiproxy"]
+        );
         assert!(history.suggest("cd Work/dev/api", 8).is_empty());
         assert!(history.suggest("  ", 8).is_empty());
     }

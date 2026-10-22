@@ -8,8 +8,8 @@ use std::thread;
 use std::time::Duration;
 
 use crate::config::TelnetOptions;
-use crate::session::{Output, Transport, WinSize};
 use crate::i18n::tr;
+use crate::session::{Output, Transport, WinSize};
 
 const IAC: u8 = 255;
 const DONT: u8 = 254;
@@ -156,7 +156,11 @@ pub struct TelnetTransport {
     size: Arc<Mutex<WinSize>>,
 }
 
-pub fn connect(options: &TelnetOptions, size: WinSize, tx: Sender<Output>) -> io::Result<TelnetTransport> {
+pub fn connect(
+    options: &TelnetOptions,
+    size: WinSize,
+    tx: Sender<Output>,
+) -> io::Result<TelnetTransport> {
     let address = (options.host.as_str(), options.port)
         .to_socket_addrs()?
         .next()
@@ -171,28 +175,37 @@ pub fn connect(options: &TelnetOptions, size: WinSize, tx: Sender<Output>) -> io
     let shared_size = Arc::new(Mutex::new(size));
     let size_for_reader = shared_size.clone();
     let target = format!("{}:{}", options.host, options.port);
-    thread::Builder::new().name("cterm-telnet".into()).spawn(move || {
-        let mut buffer = vec![0u8; 16 * 1024];
-        let reason = loop {
-            match reader.read(&mut buffer) {
-                Ok(0) => break tr("连接已被远端关闭"),
-                Err(err) => break trf!("连接中断：{err}", err = err),
-                Ok(count) => {
-                    let current = *size_for_reader.lock().unwrap();
-                    let parsed = reader_negotiator.lock().unwrap().feed(&buffer[..count], current);
-                    if !parsed.replies.is_empty() {
-                        let _ = replier.write_all(&parsed.replies);
-                    }
-                    if !parsed.data.is_empty() && tx.send(Output::Data(parsed.data)).is_err() {
-                        return;
+    thread::Builder::new()
+        .name("cterm-telnet".into())
+        .spawn(move || {
+            let mut buffer = vec![0u8; 16 * 1024];
+            let reason = loop {
+                match reader.read(&mut buffer) {
+                    Ok(0) => break tr("连接已被远端关闭"),
+                    Err(err) => break trf!("连接中断：{err}", err = err),
+                    Ok(count) => {
+                        let current = *size_for_reader.lock().unwrap();
+                        let parsed = reader_negotiator
+                            .lock()
+                            .unwrap()
+                            .feed(&buffer[..count], current);
+                        if !parsed.replies.is_empty() {
+                            let _ = replier.write_all(&parsed.replies);
+                        }
+                        if !parsed.data.is_empty() && tx.send(Output::Data(parsed.data)).is_err() {
+                            return;
+                        }
                     }
                 }
-            }
-        };
-        crate::log::info(&format!("Telnet {target} 会话结束：{reason}"));
-        let _ = tx.send(Output::Closed(reason));
-    })?;
-    Ok(TelnetTransport { stream, negotiator, size: shared_size })
+            };
+            crate::log::info(&format!("Telnet {target} 会话结束：{reason}"));
+            let _ = tx.send(Output::Closed(reason));
+        })?;
+    Ok(TelnetTransport {
+        stream,
+        negotiator,
+        size: shared_size,
+    })
 }
 
 impl Transport for TelnetTransport {
@@ -216,12 +229,19 @@ impl Transport for TelnetTransport {
 mod tests {
     use super::*;
 
-    const SIZE: WinSize = WinSize { cols: 80, rows: 24, cell_width: 8, cell_height: 16 };
+    const SIZE: WinSize = WinSize {
+        cols: 80,
+        rows: 24,
+        cell_width: 8,
+        cell_height: 16,
+    };
 
     #[test]
     fn negotiation_and_data_split() {
         let mut negotiator = Negotiator::default();
-        let input = [b'h', IAC, DO, OPT_NAWS, b'i', IAC, IAC, IAC, WILL, OPT_ECHO, IAC, DO, 99];
+        let input = [
+            b'h', IAC, DO, OPT_NAWS, b'i', IAC, IAC, IAC, WILL, OPT_ECHO, IAC, DO, 99,
+        ];
         let parsed = negotiator.feed(&input, SIZE);
         assert_eq!(parsed.data, [b'h', b'i', IAC]);
         let mut expected = vec![IAC, WILL, OPT_NAWS];
@@ -238,13 +258,26 @@ mod tests {
         assert!(first.replies.is_empty());
         let second = negotiator.feed(&[1, IAC, SE, b'x'], SIZE);
         assert_eq!(second.data, b"x");
-        assert!(second.replies.windows(14).any(|window| window == b"xterm-256color"));
+        assert!(second
+            .replies
+            .windows(14)
+            .any(|window| window == b"xterm-256color"));
     }
 
     #[test]
     fn output_escaping() {
-        assert_eq!(escape_output(&[b'a', IAC, b'\r']), [b'a', IAC, IAC, b'\r', 0]);
-        assert_eq!(naws(WinSize { cols: 255, rows: 1, ..SIZE }), [IAC, SB, OPT_NAWS, 0, 255, 255, 0, 1, IAC, SE]);
+        assert_eq!(
+            escape_output(&[b'a', IAC, b'\r']),
+            [b'a', IAC, IAC, b'\r', 0]
+        );
+        assert_eq!(
+            naws(WinSize {
+                cols: 255,
+                rows: 1,
+                ..SIZE
+            }),
+            [IAC, SB, OPT_NAWS, 0, 255, 255, 0, 1, IAC, SE]
+        );
     }
 
     #[test]
@@ -265,7 +298,12 @@ mod tests {
     #[test]
     fn refusals_get_no_reply_and_unknown_options_are_declined() {
         let mut negotiator = Negotiator::default();
-        let parsed = negotiator.feed(&[IAC, WONT, OPT_ECHO, IAC, DONT, OPT_SGA, IAC, WILL, 99, IAC, DO, OPT_TTYPE], SIZE);
+        let parsed = negotiator.feed(
+            &[
+                IAC, WONT, OPT_ECHO, IAC, DONT, OPT_SGA, IAC, WILL, 99, IAC, DO, OPT_TTYPE,
+            ],
+            SIZE,
+        );
         assert!(parsed.data.is_empty());
         assert_eq!(parsed.replies, [IAC, DONT, 99, IAC, WILL, OPT_TTYPE]);
         // NOP / GA 等两字节命令直接丢弃，不混进终端数据
@@ -304,10 +342,17 @@ mod tests {
     #[test]
     fn naws_uses_current_size_and_escapes_every_byte() {
         let mut negotiator = Negotiator::default();
-        let size = WinSize { cols: 300, rows: 0xff00 | 50, ..SIZE };
+        let size = WinSize {
+            cols: 300,
+            rows: 0xff00 | 50,
+            ..SIZE
+        };
         let parsed = negotiator.feed(&[IAC, DO, OPT_NAWS], size);
         assert_eq!(&parsed.replies[..3], [IAC, WILL, OPT_NAWS]);
-        assert_eq!(&parsed.replies[3..], [IAC, SB, OPT_NAWS, 0x01, 0x2c, 0xff, 0xff, 50, IAC, SE]);
+        assert_eq!(
+            &parsed.replies[3..],
+            [IAC, SB, OPT_NAWS, 0x01, 0x2c, 0xff, 0xff, 50, IAC, SE]
+        );
     }
 
     #[test]

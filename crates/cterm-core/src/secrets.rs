@@ -14,7 +14,9 @@ fn entry(key: &str) -> Result<keyring::Entry, String> {
 }
 
 pub fn set(key: &str, value: &str) -> Result<(), String> {
-    entry(key)?.set_password(value).map_err(|err| trf!("保存到钥匙串失败：{err}", err = err))
+    entry(key)?
+        .set_password(value)
+        .map_err(|err| trf!("保存到钥匙串失败：{err}", err = err))
 }
 
 /// 仅供 Rust 内部连接时使用

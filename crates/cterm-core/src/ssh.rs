@@ -5,9 +5,10 @@ use std::io;
 use std::path::PathBuf;
 use std::pin::Pin;
 use std::process::Stdio;
-use std::task::{Context, Poll};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, LazyLock};
+use std::task::{Context, Poll};
 use std::time::Duration;
 
 use russh::client::{self, AuthResult, Handle, KeyboardInteractiveAuthResponse};
@@ -15,15 +16,17 @@ use russh::keys::agent::client::AgentClient;
 use russh::keys::known_hosts::{check_known_hosts_path, learn_known_hosts_path};
 use russh::keys::{HashAlg, PrivateKeyWithHashAlg, PublicKey, PublicKeyOrCertificate};
 use russh::{Channel, ChannelMsg, Disconnect};
-use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader, ReadBuf};
+use tokio::io::{
+    AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader, ReadBuf,
+};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::process::{Child, ChildStdin, ChildStdout};
 use tokio::sync::{mpsc, Mutex};
 
-use crate::i18n::tr;
 use crate::config::{ForwardedPort, Profile, ProfileKind, SshOptions, SshSettings};
-use crate::{log, secrets};
+use crate::i18n::tr;
 use crate::session::{Output, Transport, WinSize};
+use crate::{log, secrets};
 
 pub static RUNTIME: LazyLock<tokio::runtime::Runtime> = LazyLock::new(|| {
     tokio::runtime::Builder::new_multi_thread()
@@ -49,20 +52,40 @@ pub struct SshTransport {
 #[derive(Default)]
 pub struct SshShared {
     handle: std::sync::OnceLock<Arc<Handle<HostCheck>>>,
+    shell_ready: Arc<AtomicBool>,
+}
+
+struct ShellReadyReset(Arc<AtomicBool>);
+
+impl Drop for ShellReadyReset {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::Release);
+    }
 }
 
 impl SshShared {
-    pub(crate) async fn open_subsystem(&self, name: &str) -> Result<russh::ChannelStream<client::Msg>, String> {
+    pub(crate) async fn open_subsystem(
+        &self,
+        name: &str,
+    ) -> Result<russh::ChannelStream<client::Msg>, String> {
         let handle = self.handle.get().ok_or_else(|| tr("SSH 尚未连接成功"))?;
-        let channel = handle.channel_open_session().await.map_err(|err| trf!("打开通道失败：{err}", err = err))?;
-        channel.request_subsystem(true, name).await.map_err(|err| trf!("服务器不支持 {name}：{err}", name = name, err = err))?;
+        let channel = handle
+            .channel_open_session()
+            .await
+            .map_err(|err| trf!("打开通道失败：{err}", err = err))?;
+        channel
+            .request_subsystem(true, name)
+            .await
+            .map_err(|err| trf!("服务器不支持 {name}：{err}", name = name, err = err))?;
         Ok(channel.into_stream())
     }
 }
 
 impl Transport for SshTransport {
     fn write(&mut self, data: &[u8]) -> io::Result<()> {
-        self.commands.send(Command::Data(data.to_vec())).map_err(|_| io::Error::other(tr("连接已关闭")))
+        self.commands
+            .send(Command::Data(data.to_vec()))
+            .map_err(|_| io::Error::other(tr("连接已关闭")))
     }
 
     fn resize(&mut self, size: WinSize) {
@@ -76,6 +99,19 @@ impl Transport for SshTransport {
     fn ssh(&self) -> Option<Arc<SshShared>> {
         Some(self.shared.clone())
     }
+
+    fn ai_shell_capability(&self) -> Option<String> {
+        self.shared
+            .shell_ready
+            .load(Ordering::Acquire)
+            .then(|| "SSH 远端 shell（要求 POSIX shell；用户需先确认当前显示 shell 提示符）".into())
+    }
+
+    fn ai_shell_ready(&self) -> bool {
+        // SSH does not expose a portable foreground-process/prompt query. The UI must
+        // obtain explicit confirmation that the remote terminal is at a shell prompt.
+        self.shared.shell_ready.load(Ordering::Acquire)
+    }
 }
 
 /// 在终端里提问并读取用户输入的一行
@@ -87,7 +123,9 @@ struct Prompter {
 
 impl Prompter {
     fn print(&self, text: &str) {
-        let _ = self.out.send(Output::Data(text.replace('\n', "\r\n").into_bytes()));
+        let _ = self
+            .out
+            .send(Output::Data(text.replace('\n', "\r\n").into_bytes()));
     }
 
     fn info(&self, text: &str) {
@@ -139,13 +177,20 @@ impl Prompter {
     }
 
     async fn confirm(&mut self, prompt: &str) -> bool {
-        matches!(self.read_line(prompt, true).await.as_deref().map(str::trim), Some("y" | "yes" | "Y" | "YES"))
+        matches!(
+            self.read_line(prompt, true).await.as_deref().map(str::trim),
+            Some("y" | "yes" | "Y" | "YES")
+        )
     }
 }
 
 /// 暗色的一行提示（连接过程信息、代理命令的 stderr）
 fn dim(text: &str) -> Output {
-    Output::Data(format!("\x1b[2m{text}\x1b[0m\n").replace('\n', "\r\n").into_bytes())
+    Output::Data(
+        format!("\x1b[2m{text}\x1b[0m\n")
+            .replace('\n', "\r\n")
+            .into_bytes(),
+    )
 }
 
 type SharedPrompter = Arc<Mutex<Prompter>>;
@@ -165,7 +210,10 @@ struct HostCheck {
 impl client::Handler for HostCheck {
     type Error = russh::Error;
 
-    async fn check_server_key(&mut self, server_key: &PublicKeyOrCertificate) -> Result<bool, Self::Error> {
+    async fn check_server_key(
+        &mut self,
+        server_key: &PublicKeyOrCertificate,
+    ) -> Result<bool, Self::Error> {
         if !self.verify {
             return Ok(true);
         }
@@ -180,7 +228,11 @@ impl client::Handler for HostCheck {
         Ok(accepted)
     }
 
-    async fn auth_banner(&mut self, banner: &str, _session: &mut client::Session) -> Result<(), Self::Error> {
+    async fn auth_banner(
+        &mut self,
+        banner: &str,
+        _session: &mut client::Session,
+    ) -> Result<(), Self::Error> {
         self.prompter.lock().await.print(banner);
         Ok(())
     }
@@ -224,13 +276,25 @@ impl HostCheck {
         match checked {
             Ok(true) => true,
             Ok(false) => {
-                let unknown = trf!("无法确认主机 {host}:{port} 的真实性。", host = self.host, port = self.port);
-                let print = trf!("{algorithm} 密钥指纹：{fingerprint}", algorithm = algorithm, fingerprint = fingerprint);
+                let unknown = trf!(
+                    "无法确认主机 {host}:{port} 的真实性。",
+                    host = self.host,
+                    port = self.port
+                );
+                let print = trf!(
+                    "{algorithm} 密钥指纹：{fingerprint}",
+                    algorithm = algorithm,
+                    fingerprint = fingerprint
+                );
                 prompter.print(&format!("\x1b[33m{unknown}\x1b[0m\n{print}\n"));
-                let answer = prompter.read_line(&tr("是否信任并保存到 known_hosts？(yes/no/once) "), true).await;
+                let answer = prompter
+                    .read_line(&tr("是否信任并保存到 known_hosts？(yes/no/once) "), true)
+                    .await;
                 match answer.as_deref().map(str::trim) {
                     Some("yes" | "y") => {
-                        if let Err(err) = learn_known_hosts_path(&self.host, self.port, key, &self.known_hosts) {
+                        if let Err(err) =
+                            learn_known_hosts_path(&self.host, self.port, key, &self.known_hosts)
+                        {
                             prompter.info(&trf!("写入 known_hosts 失败：{err}", err = err));
                         }
                         true
@@ -240,17 +304,38 @@ impl HostCheck {
                 }
             }
             Err(russh::keys::Error::KeyChanged { line }) => {
-                let warning = trf!("警告：主机 {host}:{port} 的密钥已变更！", host = self.host, port = self.port);
+                let warning = trf!(
+                    "警告：主机 {host}:{port} 的密钥已变更！",
+                    host = self.host,
+                    port = self.port
+                );
                 let reason = tr("可能有人正在进行中间人攻击，也可能是服务器重装了系统。");
-                let recorded = trf!("known_hosts 第 {line} 行记录的密钥与本次不同。", line = line);
-                let print = trf!("新的 {algorithm} 密钥指纹：{fingerprint}", algorithm = algorithm, fingerprint = fingerprint);
-                prompter.print(&format!("\x1b[31;1m{warning}\x1b[0m\n\x1b[31m{reason}\n{recorded}\n{print}\x1b[0m\n"));
-                prompter.confirm(&tr("仍然继续连接（本次）？(yes/no) ")).await
+                let recorded = trf!(
+                    "known_hosts 第 {line} 行记录的密钥与本次不同。",
+                    line = line
+                );
+                let print = trf!(
+                    "新的 {algorithm} 密钥指纹：{fingerprint}",
+                    algorithm = algorithm,
+                    fingerprint = fingerprint
+                );
+                prompter.print(&format!(
+                    "\x1b[31;1m{warning}\x1b[0m\n\x1b[31m{reason}\n{recorded}\n{print}\x1b[0m\n"
+                ));
+                prompter
+                    .confirm(&tr("仍然继续连接（本次）？(yes/no) "))
+                    .await
             }
             Err(err) => {
                 prompter.info(&trf!("读取 known_hosts 失败：{err}", err = err));
-                let print = trf!("{algorithm} 密钥指纹：{fingerprint}", algorithm = algorithm, fingerprint = fingerprint);
-                prompter.confirm(&format!("{print}\n{}", tr("是否继续连接？(yes/no) "))).await
+                let print = trf!(
+                    "{algorithm} 密钥指纹：{fingerprint}",
+                    algorithm = algorithm,
+                    fingerprint = fingerprint
+                );
+                prompter
+                    .confirm(&format!("{print}\n{}", tr("是否继续连接？(yes/no) ")))
+                    .await
             }
         }
     }
@@ -268,7 +353,11 @@ pub fn connect(
         return Err(tr("不是 SSH 配置"));
     };
     let (command_tx, command_rx) = mpsc::unbounded_channel();
-    let prompter = Arc::new(Mutex::new(Prompter { out: out.clone(), commands: command_rx, size }));
+    let prompter = Arc::new(Mutex::new(Prompter {
+        out: out.clone(),
+        commands: command_rx,
+        size,
+    }));
     let shared = Arc::new(SshShared::default());
     let job = Job {
         profile_id: profile.id.clone(),
@@ -282,7 +371,10 @@ pub fn connect(
     RUNTIME.spawn(async move {
         let reason = match job.run().await {
             Ok(reason) => {
-                log::info(&format!("SSH {target} 会话结束：{}", if reason.is_empty() { "正常" } else { &reason }));
+                log::info(&format!(
+                    "SSH {target} 会话结束：{}",
+                    if reason.is_empty() { "正常" } else { &reason }
+                ));
                 reason
             }
             Err(err) => {
@@ -292,7 +384,10 @@ pub fn connect(
         };
         let _ = out.send(Output::Closed(reason));
     });
-    Ok(SshTransport { commands: command_tx, shared })
+    Ok(SshTransport {
+        commands: command_tx,
+        shared,
+    })
 }
 
 struct Job {
@@ -325,7 +420,12 @@ fn client_config(options: &SshOptions) -> Arc<client::Config> {
 }
 
 /// ProxyCommand 占位符，同 OpenSSH：%h 主机、%p 端口、%r 用户、%% 百分号
-fn expand_proxy_command(template: &str, host: &str, port: u16, user: &str) -> Result<String, String> {
+fn expand_proxy_command(
+    template: &str,
+    host: &str,
+    port: u16,
+    user: &str,
+) -> Result<String, String> {
     let mut command = String::new();
     let mut chars = template.chars();
     while let Some(c) = chars.next() {
@@ -358,7 +458,11 @@ struct ProxyStream {
 impl ProxyStream {
     fn spawn(command: &str, out: Sender<Output>) -> io::Result<ProxyStream> {
         let mut process = proxy_process(command);
-        process.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).kill_on_drop(true);
+        process
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .kill_on_drop(true);
         let mut child = process.spawn()?;
         let stdin = child.stdin.take().expect("stdin 已设为 piped");
         let stdout = child.stdout.take().expect("stdout 已设为 piped");
@@ -367,12 +471,20 @@ impl ProxyStream {
         tokio::spawn(async move {
             let mut reader = BufReader::new(stderr);
             let mut buffer = Vec::new();
-            while reader.read_until(b'\n', &mut buffer).await.is_ok_and(|count| count > 0) {
+            while reader
+                .read_until(b'\n', &mut buffer)
+                .await
+                .is_ok_and(|count| count > 0)
+            {
                 let _ = out.send(dim(String::from_utf8_lossy(&buffer).trim_end()));
                 buffer.clear();
             }
         });
-        Ok(ProxyStream { stdin, stdout, _child: child })
+        Ok(ProxyStream {
+            stdin,
+            stdout,
+            _child: child,
+        })
     }
 }
 
@@ -390,18 +502,29 @@ fn proxy_process(command: &str) -> tokio::process::Command {
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
     let mut process = tokio::process::Command::new("cmd");
     // 原样传给 cmd，不做 Rust 的参数转义（否则命令里的引号会被改写）
-    process.arg("/C").raw_arg(command).creation_flags(CREATE_NO_WINDOW);
+    process
+        .arg("/C")
+        .raw_arg(command)
+        .creation_flags(CREATE_NO_WINDOW);
     process
 }
 
 impl AsyncRead for ProxyStream {
-    fn poll_read(mut self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &mut ReadBuf<'_>) -> Poll<io::Result<()>> {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<io::Result<()>> {
         Pin::new(&mut self.stdout).poll_read(cx, buf)
     }
 }
 
 impl AsyncWrite for ProxyStream {
-    fn poll_write(mut self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &[u8]) -> Poll<io::Result<usize>> {
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<io::Result<usize>> {
         Pin::new(&mut self.stdin).poll_write(cx, buf)
     }
 
@@ -416,10 +539,14 @@ impl AsyncWrite for ProxyStream {
 
 impl Job {
     async fn run(self) -> Result<String, String> {
+        let _shell_ready_reset = ShellReadyReset(self.shared.shell_ready.clone());
         let handle = Arc::new(self.open(&self.options, &self.profile_id, 0).await?);
         let _ = self.shared.handle.set(handle.clone());
 
-        let mut channel = handle.channel_open_session().await.map_err(|err| trf!("打开会话失败：{err}", err = err))?;
+        let mut channel = handle
+            .channel_open_session()
+            .await
+            .map_err(|err| trf!("打开会话失败：{err}", err = err))?;
         if self.options.agent_forward {
             let _ = channel.agent_forward(false).await;
         }
@@ -436,19 +563,36 @@ impl Job {
             )
             .await
             .map_err(|err| trf!("申请终端失败：{err}", err = err))?;
-        channel.request_shell(false).await.map_err(|err| trf!("启动 shell 失败：{err}", err = err))?;
+        channel
+            .request_shell(false)
+            .await
+            .map_err(|err| trf!("启动 shell 失败：{err}", err = err))?;
 
         for forward in &self.options.forwarded_ports {
             self.start_forward(&handle, forward).await;
         }
 
         let mut prompter = self.prompter.lock().await;
-        let mut scripts: Vec<_> = self.options.login_scripts.iter().filter(|script| !script.send.is_empty()).cloned().collect();
+        let mut scripts: Vec<_> = self
+            .options
+            .login_scripts
+            .iter()
+            .filter(|script| !script.send.is_empty())
+            .cloned()
+            .collect();
         // 没有等待条件的登录脚本立即发送
-        while scripts.first().is_some_and(|script| script.expect.is_empty()) {
+        while scripts
+            .first()
+            .is_some_and(|script| script.expect.is_empty())
+        {
             let script = scripts.remove(0);
-            let _ = channel.data_bytes(format!("{}\r", script.send).into_bytes()).await;
+            let _ = channel
+                .data_bytes(format!("{}\r", script.send).into_bytes())
+                .await;
         }
+        self.shared
+            .shell_ready
+            .store(scripts.is_empty(), Ordering::Release);
         let mut recent_output = String::new();
         let mut exit_code = None;
 
@@ -484,6 +628,7 @@ impl Job {
                                 if recent_output.contains(&script.expect) {
                                     let _ = channel.data_bytes(format!("{}\r", script.send).into_bytes()).await;
                                     scripts.remove(0);
+                                    self.shared.shell_ready.store(scripts.is_empty(), Ordering::Release);
                                     recent_output.clear();
                                 }
                             }
@@ -506,11 +651,17 @@ impl Job {
                 },
             }
         };
+        self.shared.shell_ready.store(false, Ordering::Release);
         Ok(reason)
     }
 
     /// 连接并认证；配置了跳板机时先连跳板机，再经它转发到目标
-    async fn open(&self, options: &SshOptions, profile_id: &str, depth: usize) -> Result<Handle<HostCheck>, String> {
+    async fn open(
+        &self,
+        options: &SshOptions,
+        profile_id: &str,
+        depth: usize,
+    ) -> Result<Handle<HostCheck>, String> {
         if depth > 5 {
             return Err(tr("跳板机层级过深，可能存在循环引用"));
         }
@@ -521,7 +672,12 @@ impl Job {
             known_hosts: known_hosts_path(&self.settings),
             verify: self.settings.verify_host_keys,
             prompter: self.prompter.clone(),
-            remote_forwards: options.forwarded_ports.iter().filter(|forward| forward.kind == "remote").cloned().collect(),
+            remote_forwards: options
+                .forwarded_ports
+                .iter()
+                .filter(|forward| forward.kind == "remote")
+                .cloned()
+                .collect(),
             accepted: None,
         };
         let config = client_config(options);
@@ -538,10 +694,23 @@ impl Job {
                 return Err(tr("跳板机必须是 SSH 配置"));
             };
             let jump_handle = Box::pin(self.open(jump_options, &jump.id, depth + 1)).await?;
-            self.prompter.lock().await.info(&trf!("经由 {jump} 连接 {host}:{port} …", jump = jump.name, host = options.host, port = options.port));
-            log::info(&format!("SSH 经跳板机 {} 连接 {}:{}", jump.name, options.host, options.port));
+            self.prompter.lock().await.info(&trf!(
+                "经由 {jump} 连接 {host}:{port} …",
+                jump = jump.name,
+                host = options.host,
+                port = options.port
+            ));
+            log::info(&format!(
+                "SSH 经跳板机 {} 连接 {}:{}",
+                jump.name, options.host, options.port
+            ));
             let tunnel = jump_handle
-                .channel_open_direct_tcpip(options.host.clone(), options.port as u32, "127.0.0.1", 0)
+                .channel_open_direct_tcpip(
+                    options.host.clone(),
+                    options.port as u32,
+                    "127.0.0.1",
+                    0,
+                )
                 .await
                 .map_err(|err| trf!("跳板机转发失败：{err}", err = err))?;
             let connecting = client::connect_stream(config, tunnel.into_stream(), handler);
@@ -558,32 +727,69 @@ impl Job {
             });
             handle
         } else if !options.proxy_command.is_empty() {
-            let command = expand_proxy_command(&options.proxy_command, &options.host, options.port, &user)?;
+            let command =
+                expand_proxy_command(&options.proxy_command, &options.host, options.port, &user)?;
             let out = {
                 let prompter = self.prompter.lock().await;
-                prompter.info(&trf!("经由代理命令连接 {host}:{port} …", host = options.host, port = options.port));
+                prompter.info(&trf!(
+                    "经由代理命令连接 {host}:{port} …",
+                    host = options.host,
+                    port = options.port
+                ));
                 prompter.out.clone()
             };
             // 命令本身可能带凭据（如 sshpass），日志里不记
-            log::info(&format!("SSH 经 ProxyCommand 连接 {}:{}", options.host, options.port));
-            let stream = ProxyStream::spawn(&command, out).map_err(|err| trf!("无法启动代理命令：{err}", err = err))?;
+            log::info(&format!(
+                "SSH 经 ProxyCommand 连接 {}:{}",
+                options.host, options.port
+            ));
+            let stream = ProxyStream::spawn(&command, out)
+                .map_err(|err| trf!("无法启动代理命令：{err}", err = err))?;
             let connecting = client::connect_stream(config, stream, handler);
             tokio::time::timeout(timeout, connecting)
                 .await
-                .map_err(|_| trf!("连接 {host}:{port} 超时", host = options.host, port = options.port))?
+                .map_err(|_| {
+                    trf!(
+                        "连接 {host}:{port} 超时",
+                        host = options.host,
+                        port = options.port
+                    )
+                })?
                 .map_err(|err| trf!("经代理命令连接失败：{err}", err = err))?
         } else {
-            self.prompter.lock().await.info(&trf!("正在连接 {host}:{port} …", host = options.host, port = options.port));
+            self.prompter.lock().await.info(&trf!(
+                "正在连接 {host}:{port} …",
+                host = options.host,
+                port = options.port
+            ));
             log::info(&format!("SSH 连接 {}:{}", options.host, options.port));
-            let connecting = client::connect(config, (options.host.as_str(), options.port), handler);
+            let connecting =
+                client::connect(config, (options.host.as_str(), options.port), handler);
             tokio::time::timeout(timeout, connecting)
                 .await
-                .map_err(|_| trf!("连接 {host}:{port} 超时", host = options.host, port = options.port))?
-                .map_err(|err| trf!("连接 {host}:{port} 失败：{err}", host = options.host, port = options.port, err = err))?
+                .map_err(|_| {
+                    trf!(
+                        "连接 {host}:{port} 超时",
+                        host = options.host,
+                        port = options.port
+                    )
+                })?
+                .map_err(|err| {
+                    trf!(
+                        "连接 {host}:{port} 失败：{err}",
+                        host = options.host,
+                        port = options.port,
+                        err = err
+                    )
+                })?
         };
 
-        self.authenticate(&mut handle, options, profile_id, &user).await?;
-        log::info(&format!("SSH {user}@{}:{} 已连接并通过认证", options.host, options.port));
+        self.authenticate(&mut handle, options, profile_id, &user)
+            .await?;
+        log::info(&format!(
+            "SSH {user}@{}:{} 已连接并通过认证",
+            options.host, options.port
+        ));
         Ok(handle)
     }
 
@@ -592,11 +798,21 @@ impl Job {
             return Ok(options.user.clone());
         }
         let mut prompter = self.prompter.lock().await;
-        let user = prompter.read_line(&trf!("{host} 的用户名：", host = options.host), true).await;
-        user.filter(|user| !user.trim().is_empty()).map(|user| user.trim().to_string()).ok_or_else(|| tr("已取消"))
+        let user = prompter
+            .read_line(&trf!("{host} 的用户名：", host = options.host), true)
+            .await;
+        user.filter(|user| !user.trim().is_empty())
+            .map(|user| user.trim().to_string())
+            .ok_or_else(|| tr("已取消"))
     }
 
-    async fn authenticate(&self, handle: &mut Handle<HostCheck>, options: &SshOptions, profile_id: &str, user: &str) -> Result<(), String> {
+    async fn authenticate(
+        &self,
+        handle: &mut Handle<HostCheck>,
+        options: &SshOptions,
+        profile_id: &str,
+        user: &str,
+    ) -> Result<(), String> {
         let method = options.auth.as_str();
         let auto = method == "auto";
         let fail = |err: russh::Error| trf!("认证出错：{err}", err = err);
@@ -628,12 +844,24 @@ impl Job {
             for path in keys {
                 if !path.exists() {
                     if explicit {
-                        self.prompter.lock().await.info(&trf!("私钥不存在：{path}", path = path.display()));
+                        self.prompter
+                            .lock()
+                            .await
+                            .info(&trf!("私钥不存在：{path}", path = path.display()));
                     }
                     continue;
                 }
-                let Some(key) = self.load_key(&path, profile_id, explicit || method == "publicKey").await else { continue };
-                let hash = handle.best_supported_rsa_hash().await.map_err(fail)?.flatten();
+                let Some(key) = self
+                    .load_key(&path, profile_id, explicit || method == "publicKey")
+                    .await
+                else {
+                    continue;
+                };
+                let hash = handle
+                    .best_supported_rsa_hash()
+                    .await
+                    .map_err(fail)?
+                    .flatten();
                 let result = handle
                     .authenticate_publickey(user, PrivateKeyWithHashAlg::new(Arc::new(key), hash))
                     .await
@@ -649,16 +877,29 @@ impl Job {
         if auto || method == "password" || method == "keyboardInteractive" {
             let password_key = secrets::key("password", profile_id);
             if let Some(saved) = secrets::get(&password_key) {
-                if method != "keyboardInteractive" && handle.authenticate_password(user, saved.clone()).await.map_err(fail)?.success() {
+                if method != "keyboardInteractive"
+                    && handle
+                        .authenticate_password(user, saved.clone())
+                        .await
+                        .map_err(fail)?
+                        .success()
+                {
                     passed("钥匙串中的密码");
                     return Ok(());
                 }
-                if method != "password" && self.keyboard_interactive(handle, user, Some(&saved)).await? {
+                if method != "password"
+                    && self
+                        .keyboard_interactive(handle, user, Some(&saved))
+                        .await?
+                {
                     passed("键盘交互（钥匙串中的密码）");
                     return Ok(());
                 }
                 rejected("钥匙串中的密码已失效");
-                self.prompter.lock().await.info(&tr("钥匙串中保存的密码已失效"));
+                self.prompter
+                    .lock()
+                    .await
+                    .info(&tr("钥匙串中保存的密码已失效"));
             } else if method != "password" {
                 if self.keyboard_interactive(handle, user, None).await? {
                     passed("键盘交互");
@@ -669,10 +910,16 @@ impl Job {
             if method != "keyboardInteractive" {
                 for _ in 0..3 {
                     let prompt = trf!("{user}@{host} 的密码：", user = user, host = options.host);
-                    let Some(password) = self.prompter.lock().await.read_line(&prompt, false).await else {
+                    let Some(password) = self.prompter.lock().await.read_line(&prompt, false).await
+                    else {
                         return Err(tr("已取消"));
                     };
-                    if handle.authenticate_password(user, password.clone()).await.map_err(fail)?.success() {
+                    if handle
+                        .authenticate_password(user, password.clone())
+                        .await
+                        .map_err(fail)?
+                        .success()
+                    {
                         passed("输入的密码");
                         self.offer_save(&password_key, &password).await;
                         return Ok(());
@@ -691,11 +938,21 @@ impl Job {
         #[cfg(windows)]
         let agent = AgentClient::connect_named_pipe(r"\\.\pipe\openssh-ssh-agent").await;
         let Ok(mut agent) = agent else { return false };
-        let Ok(identities) = agent.request_identities().await else { return false };
+        let Ok(identities) = agent.request_identities().await else {
+            return false;
+        };
         for identity in identities {
             let key: PublicKey = identity.public_key().into_owned();
-            let hash = handle.best_supported_rsa_hash().await.ok().flatten().flatten();
-            if let Ok(result) = handle.authenticate_publickey_with(user, key, hash, &mut agent).await {
+            let hash = handle
+                .best_supported_rsa_hash()
+                .await
+                .ok()
+                .flatten()
+                .flatten();
+            if let Ok(result) = handle
+                .authenticate_publickey_with(user, key, hash, &mut agent)
+                .await
+            {
                 if result.success() {
                     return true;
                 }
@@ -705,12 +962,21 @@ impl Job {
     }
 
     /// 加载私钥；加密的私钥先查钥匙串，再（允许时）提示输入口令
-    async fn load_key(&self, path: &PathBuf, profile_id: &str, may_prompt: bool) -> Option<russh::keys::PrivateKey> {
+    async fn load_key(
+        &self,
+        path: &PathBuf,
+        profile_id: &str,
+        may_prompt: bool,
+    ) -> Option<russh::keys::PrivateKey> {
         match russh::keys::load_secret_key(path, None) {
             Ok(key) => return Some(key),
             Err(russh::keys::Error::KeyIsEncrypted) => {}
             Err(err) => {
-                self.prompter.lock().await.info(&trf!("无法读取私钥 {path}：{err}", path = path.display(), err = err));
+                self.prompter.lock().await.info(&trf!(
+                    "无法读取私钥 {path}：{err}",
+                    path = path.display(),
+                    err = err
+                ));
                 return None;
             }
         }
@@ -735,15 +1001,27 @@ impl Job {
         None
     }
 
-    async fn keyboard_interactive(&self, handle: &mut Handle<HostCheck>, user: &str, saved: Option<&str>) -> Result<bool, String> {
+    async fn keyboard_interactive(
+        &self,
+        handle: &mut Handle<HostCheck>,
+        user: &str,
+        saved: Option<&str>,
+    ) -> Result<bool, String> {
         let fail = |err: russh::Error| trf!("认证出错：{err}", err = err);
-        let mut response = handle.authenticate_keyboard_interactive_start(user, None).await.map_err(fail)?;
+        let mut response = handle
+            .authenticate_keyboard_interactive_start(user, None)
+            .await
+            .map_err(fail)?;
         let mut used_saved = false;
         loop {
             match response {
                 KeyboardInteractiveAuthResponse::Success => return Ok(true),
                 KeyboardInteractiveAuthResponse::Failure { .. } => return Ok(false),
-                KeyboardInteractiveAuthResponse::InfoRequest { name, instructions, prompts } => {
+                KeyboardInteractiveAuthResponse::InfoRequest {
+                    name,
+                    instructions,
+                    prompts,
+                } => {
                     let mut prompter = self.prompter.lock().await;
                     if !name.is_empty() {
                         prompter.info(&name);
@@ -753,7 +1031,8 @@ impl Job {
                     }
                     let mut answers = Vec::new();
                     for prompt in prompts {
-                        let is_password = !prompt.echo && prompt.prompt.to_lowercase().contains("password");
+                        let is_password =
+                            !prompt.echo && prompt.prompt.to_lowercase().contains("password");
                         if let (true, Some(saved), false) = (is_password, saved, used_saved) {
                             used_saved = true;
                             answers.push(saved.to_string());
@@ -762,17 +1041,26 @@ impl Job {
                         if saved.is_some() {
                             // 只想用已保存的密码试一次，遇到别的提问（如验证码）交给后面的交互流程
                             if !is_password {
-                                let answer = prompter.read_line(&prompt.prompt, prompt.echo).await.ok_or_else(|| tr("已取消"))?;
+                                let answer = prompter
+                                    .read_line(&prompt.prompt, prompt.echo)
+                                    .await
+                                    .ok_or_else(|| tr("已取消"))?;
                                 answers.push(answer);
                                 continue;
                             }
                             return Ok(false);
                         }
-                        let answer = prompter.read_line(&prompt.prompt, prompt.echo).await.ok_or_else(|| tr("已取消"))?;
+                        let answer = prompter
+                            .read_line(&prompt.prompt, prompt.echo)
+                            .await
+                            .ok_or_else(|| tr("已取消"))?;
                         answers.push(answer);
                     }
                     drop(prompter);
-                    response = handle.authenticate_keyboard_interactive_respond(answers).await.map_err(fail)?;
+                    response = handle
+                        .authenticate_keyboard_interactive_respond(answers)
+                        .await
+                        .map_err(fail)?;
                 }
             }
         }
@@ -780,7 +1068,10 @@ impl Job {
 
     async fn offer_save(&self, key: &str, value: &str) {
         let mut prompter = self.prompter.lock().await;
-        if prompter.confirm(&tr("保存到系统钥匙串，下次自动使用？(y/N) ")).await {
+        if prompter
+            .confirm(&tr("保存到系统钥匙串，下次自动使用？(y/N) "))
+            .await
+        {
             match secrets::set(key, value) {
                 Ok(()) => prompter.info(&tr("已保存")),
                 Err(err) => prompter.info(&err),
@@ -789,10 +1080,16 @@ impl Job {
     }
 
     async fn start_forward(&self, handle: &Arc<Handle<HostCheck>>, forward: &ForwardedPort) {
-        let bind_host = if forward.host.is_empty() { "127.0.0.1".to_string() } else { forward.host.clone() };
+        let bind_host = if forward.host.is_empty() {
+            "127.0.0.1".to_string()
+        } else {
+            forward.host.clone()
+        };
         match forward.kind.as_str() {
             "remote" => {
-                let result = handle.tcpip_forward(bind_host.clone(), forward.port as u32).await;
+                let result = handle
+                    .tcpip_forward(bind_host.clone(), forward.port as u32)
+                    .await;
                 let prompter = self.prompter.lock().await;
                 match result {
                     Ok(_) => prompter.info(&trf!(
@@ -803,8 +1100,15 @@ impl Job {
                         target_port = forward.target_port,
                     )),
                     Err(err) => {
-                        log::warn(&format!("SSH 远程转发 {}:{} 失败：{err}", bind_host, forward.port));
-                        prompter.info(&trf!("远程转发 {port} 失败：{err}", port = forward.port, err = err));
+                        log::warn(&format!(
+                            "SSH 远程转发 {}:{} 失败：{err}",
+                            bind_host, forward.port
+                        ));
+                        prompter.info(&trf!(
+                            "远程转发 {port} 失败：{err}",
+                            port = forward.port,
+                            err = err
+                        ));
                     }
                 }
             }
@@ -812,22 +1116,42 @@ impl Job {
                 let listener = match TcpListener::bind((bind_host.as_str(), forward.port)).await {
                     Ok(listener) => listener,
                     Err(err) => {
-                        log::warn(&format!("SSH 端口转发监听 {}:{} 失败：{err}", bind_host, forward.port));
-                        self.prompter.lock().await.info(&trf!("监听 {bind}:{port} 失败：{err}", bind = bind_host, port = forward.port, err = err));
+                        log::warn(&format!(
+                            "SSH 端口转发监听 {}:{} 失败：{err}",
+                            bind_host, forward.port
+                        ));
+                        self.prompter.lock().await.info(&trf!(
+                            "监听 {bind}:{port} 失败：{err}",
+                            bind = bind_host,
+                            port = forward.port,
+                            err = err
+                        ));
                         return;
                     }
                 };
                 let description = if forward.kind == "dynamic" {
-                    trf!("SOCKS 代理 {bind}:{port}", bind = bind_host, port = forward.port)
+                    trf!(
+                        "SOCKS 代理 {bind}:{port}",
+                        bind = bind_host,
+                        port = forward.port
+                    )
                 } else {
-                    trf!("本地转发 {bind}:{port} → {target}:{target_port}", bind = bind_host, port = forward.port, target = forward.target_address, target_port = forward.target_port)
+                    trf!(
+                        "本地转发 {bind}:{port} → {target}:{target_port}",
+                        bind = bind_host,
+                        port = forward.port,
+                        target = forward.target_address,
+                        target_port = forward.target_port
+                    )
                 };
                 self.prompter.lock().await.info(&description);
                 let handle = handle.clone();
                 let forward = forward.clone();
                 tokio::spawn(async move {
                     while !handle.is_closed() {
-                        let Ok((socket, peer)) = listener.accept().await else { break };
+                        let Ok((socket, peer)) = listener.accept().await else {
+                            break;
+                        };
                         let handle = handle.clone();
                         let forward = forward.clone();
                         tokio::spawn(async move {
@@ -865,7 +1189,9 @@ async fn forward_connection(
 }
 
 /// SOCKS5（无认证，仅 CONNECT）
-async fn socks5_handshake<S: AsyncReadExt + AsyncWriteExt + Unpin>(socket: &mut S) -> io::Result<(String, u16)> {
+async fn socks5_handshake<S: AsyncReadExt + AsyncWriteExt + Unpin>(
+    socket: &mut S,
+) -> io::Result<(String, u16)> {
     let mut header = [0u8; 2];
     socket.read_exact(&mut header).await?;
     if header[0] != 5 {
@@ -911,9 +1237,37 @@ mod tests {
     use super::*;
 
     #[test]
+    fn ai_shell_is_unavailable_before_shell_setup_and_after_close() {
+        let shared = Arc::new(SshShared::default());
+        let (commands, _receiver) = mpsc::unbounded_channel();
+        let transport = SshTransport {
+            commands,
+            shared: shared.clone(),
+        };
+        assert!(transport.ai_shell_capability().is_none());
+        assert!(!transport.ai_shell_ready());
+
+        shared.shell_ready.store(true, Ordering::Release);
+        assert!(transport.ai_shell_capability().is_some());
+        assert!(transport.ai_shell_ready());
+
+        shared.shell_ready.store(false, Ordering::Release);
+        assert!(transport.ai_shell_capability().is_none());
+        assert!(!transport.ai_shell_ready());
+    }
+
+    #[test]
     fn proxy_command_tokens() {
-        let expanded = expand_proxy_command("ssh -W %h:%p -l %r gw.example.com # 100%%", "192.0.2.7", 2222, "deploy");
-        assert_eq!(expanded.as_deref(), Ok("ssh -W 192.0.2.7:2222 -l deploy gw.example.com # 100%"));
+        let expanded = expand_proxy_command(
+            "ssh -W %h:%p -l %r gw.example.com # 100%%",
+            "192.0.2.7",
+            2222,
+            "deploy",
+        );
+        assert_eq!(
+            expanded.as_deref(),
+            Ok("ssh -W 192.0.2.7:2222 -l deploy gw.example.com # 100%")
+        );
         assert!(expand_proxy_command("nc %x", "h", 22, "u").is_err());
         assert!(expand_proxy_command("nc %", "h", 22, "u").is_err());
     }
@@ -940,16 +1294,35 @@ mod tests {
         RUNTIME.block_on(async {
             let (out_tx, out_rx) = std::sync::mpsc::channel();
             let (command_tx, command_rx) = mpsc::unbounded_channel();
-            let size = WinSize { cols: 80, rows: 24, cell_width: 8, cell_height: 16 };
-            let mut prompter = Prompter { out: out_tx, commands: command_rx, size };
-            command_tx.send(Command::Data("ab中".as_bytes().to_vec())).unwrap();
-            command_tx.send(Command::Data(vec![0x7f, b'c', b'\r'])).unwrap();
-            assert_eq!(prompter.read_line("pw: ", false).await.as_deref(), Some("abc"));
+            let size = WinSize {
+                cols: 80,
+                rows: 24,
+                cell_width: 8,
+                cell_height: 16,
+            };
+            let mut prompter = Prompter {
+                out: out_tx,
+                commands: command_rx,
+                size,
+            };
+            command_tx
+                .send(Command::Data("ab中".as_bytes().to_vec()))
+                .unwrap();
+            command_tx
+                .send(Command::Data(vec![0x7f, b'c', b'\r']))
+                .unwrap();
+            assert_eq!(
+                prompter.read_line("pw: ", false).await.as_deref(),
+                Some("abc")
+            );
             // 不回显：输出里只有提示和换行
-            let echoed: Vec<u8> = out_rx.try_iter().flat_map(|output| match output {
-                Output::Data(bytes) => bytes,
-                Output::Closed(_) => Vec::new(),
-            }).collect();
+            let echoed: Vec<u8> = out_rx
+                .try_iter()
+                .flat_map(|output| match output {
+                    Output::Data(bytes) => bytes,
+                    Output::Closed(_) => Vec::new(),
+                })
+                .collect();
             assert_eq!(echoed, b"pw: \r\n");
             command_tx.send(Command::Data(vec![0x03])).unwrap();
             assert_eq!(prompter.read_line("again: ", true).await, None);

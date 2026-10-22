@@ -63,7 +63,10 @@ impl Detector {
     pub fn scan<'a>(&mut self, data: &'a [u8]) -> (&'a [u8], Option<Start>) {
         let mut data = data;
         if self.skip_trailer {
-            let framing = data.iter().position(|byte| !matches!(byte, b'\r' | b'\n' | 0x8a | 0x8d | 0x11 | 0x13)).unwrap_or(data.len());
+            let framing = data
+                .iter()
+                .position(|byte| !matches!(byte, b'\r' | b'\n' | 0x8a | 0x8d | 0x11 | 0x13))
+                .unwrap_or(data.len());
             data = &data[framing..];
             if data.is_empty() {
                 return (data, None);
@@ -99,7 +102,11 @@ impl Detector {
         };
         // 起始头如果从上一块末尾开始，那几个字节已经显示过了（只是几个 *），不再追回
         let shown = index.saturating_sub(tail_len);
-        let start = Start { direction, shown, data: joined[index..].to_vec() };
+        let start = Start {
+            direction,
+            shown,
+            data: joined[index..].to_vec(),
+        };
         self.tail.clear();
         (&data[..shown], Some(start))
     }
@@ -161,7 +168,11 @@ impl Transfer {
             Direction::Download => {
                 // 缓冲 0 + CANOVIO：让 sz 连续发送，不必每 1KB 等一次确认
                 let receiver = Receiver::with_flow_control(0, true).map_err(protocol_error)?;
-                Role::Download(Download { receiver, dir: downloads_dir, file: None })
+                Role::Download(Download {
+                    receiver,
+                    dir: downloads_dir,
+                    file: None,
+                })
             }
             Direction::Upload => Role::AwaitFiles,
         };
@@ -221,7 +232,10 @@ impl Transfer {
             if self.cancel_run >= 5 {
                 self.fail(tr("对方取消了传输"));
                 let rest = &data[index + 1..];
-                let rest = rest.iter().position(|&byte| byte != CAN && byte != 0x08).map_or(&[][..], |at| &rest[at..]);
+                let rest = rest
+                    .iter()
+                    .position(|&byte| byte != CAN && byte != 0x08)
+                    .map_or(&[][..], |at| &rest[at..]);
                 self.input = rest.to_vec();
                 return;
             }
@@ -268,7 +282,9 @@ impl Transfer {
             return;
         }
         let flow = match &mut self.role {
-            Role::Download(download) => download.step(&mut self.input, &mut self.wire, &mut self.display),
+            Role::Download(download) => {
+                download.step(&mut self.input, &mut self.wire, &mut self.display)
+            }
             Role::Upload(upload) => upload.step(&mut self.input, &mut self.wire, &mut self.display),
             Role::AwaitFiles | Role::Done => Ok(Flow::Idle),
         };
@@ -354,7 +370,12 @@ struct Incoming {
 }
 
 impl Download {
-    fn step(&mut self, input: &mut Vec<u8>, wire: &mut Vec<u8>, display: &mut Vec<u8>) -> Result<Flow, String> {
+    fn step(
+        &mut self,
+        input: &mut Vec<u8>,
+        wire: &mut Vec<u8>,
+        display: &mut Vec<u8>,
+    ) -> Result<Flow, String> {
         let mut budget = STEP_BUDGET;
         loop {
             match self.receiver.poll() {
@@ -368,9 +389,17 @@ impl Download {
                     let Some(incoming) = self.file.as_mut() else {
                         return Err(tr("收到了不属于任何文件的数据"));
                     };
-                    incoming.file.write_all(bytes).map_err(|err| crate::trf!("写入 {path} 失败：{err}", path = incoming.path.display(), err = err))?;
+                    incoming.file.write_all(bytes).map_err(|err| {
+                        crate::trf!(
+                            "写入 {path} 失败：{err}",
+                            path = incoming.path.display(),
+                            err = err
+                        )
+                    })?;
                     let written = bytes.len();
-                    self.receiver.file_written(written).map_err(protocol_error)?;
+                    self.receiver
+                        .file_written(written)
+                        .map_err(protocol_error)?;
                     incoming.progress.advance(written as u64, display);
                     budget = budget.saturating_sub(written);
                     if budget == 0 {
@@ -386,7 +415,13 @@ impl Download {
                 }
                 Action::Event(Event::FileCompleted) => {
                     if let Some(incoming) = self.file.take() {
-                        incoming.file.sync_all().map_err(|err| crate::trf!("写入 {path} 失败：{err}", path = incoming.path.display(), err = err))?;
+                        incoming.file.sync_all().map_err(|err| {
+                            crate::trf!(
+                                "写入 {path} 失败：{err}",
+                                path = incoming.path.display(),
+                                err = err
+                            )
+                        })?;
                         let saved = crate::trf!("已保存到 {path}", path = incoming.path.display());
                         incoming.progress.finish(&saved, display);
                     }
@@ -420,16 +455,28 @@ impl Download {
     /// 远端给的文件名只取最后一段，防止 ../ 或绝对路径写到下载目录之外；重名加序号，不覆盖
     fn open(&mut self, name: &str, size: u64, display: &mut Vec<u8>) -> Result<(), String> {
         let safe_name = safe_file_name(name);
-        fs::create_dir_all(&self.dir).map_err(|err| crate::trf!("无法创建目录 {path}：{err}", path = self.dir.display(), err = err))?;
+        fs::create_dir_all(&self.dir).map_err(|err| {
+            crate::trf!(
+                "无法创建目录 {path}：{err}",
+                path = self.dir.display(),
+                err = err
+            )
+        })?;
         let path = paths::unique_path(&self.dir, &safe_name);
         let file = File::options()
             .write(true)
             .create_new(true)
             .open(&path)
-            .map_err(|err| crate::trf!("无法创建 {path}：{err}", path = path.display(), err = err))?;
+            .map_err(|err| {
+                crate::trf!("无法创建 {path}：{err}", path = path.display(), err = err)
+            })?;
         let mut progress = Progress::new("↓", safe_name, size);
         progress.show(display);
-        self.file = Some(Incoming { file, path, progress });
+        self.file = Some(Incoming {
+            file,
+            path,
+            progress,
+        });
         Ok(())
     }
 }
@@ -451,7 +498,12 @@ impl Upload {
         let mut sender = Sender::new().map_err(protocol_error)?;
         // SSH / TCP / PTY 都是可靠链路，对方支持连续接收时不必每 10 个包等一次确认
         sender.set_streaming_window(usize::MAX);
-        let mut upload = Upload { sender, queue: files, current: None, buffer: Vec::new() };
+        let mut upload = Upload {
+            sender,
+            queue: files,
+            current: None,
+            buffer: Vec::new(),
+        };
         upload.queue.reverse();
         upload.start_next()?;
         Ok(upload)
@@ -463,18 +515,39 @@ impl Upload {
             self.current = None;
             return self.sender.finish().map_err(protocol_error);
         };
-        let file = File::open(&path).map_err(|err| crate::trf!("无法打开 {path}：{err}", path = path.display(), err = err))?;
-        let size = file.metadata().map_err(|err| crate::trf!("无法打开 {path}：{err}", path = path.display(), err = err))?.len();
+        let file = File::open(&path).map_err(|err| {
+            crate::trf!("无法打开 {path}：{err}", path = path.display(), err = err)
+        })?;
+        let size = file
+            .metadata()
+            .map_err(|err| crate::trf!("无法打开 {path}：{err}", path = path.display(), err = err))?
+            .len();
         let Ok(size32) = u32::try_from(size) else {
-            return Err(crate::trf!("{path} 超过 4GB，ZMODEM 不支持", path = path.display()));
+            return Err(crate::trf!(
+                "{path} 超过 4GB，ZMODEM 不支持",
+                path = path.display()
+            ));
         };
-        let name = path.file_name().map(|name| name.to_string_lossy().to_string()).unwrap_or_default();
-        self.sender.start_file(FileInfo::new(name.as_bytes(), Some(Position::new(size32)))).map_err(protocol_error)?;
-        self.current = Some(Outgoing { file, progress: Progress::new("↑", name, size) });
+        let name = path
+            .file_name()
+            .map(|name| name.to_string_lossy().to_string())
+            .unwrap_or_default();
+        self.sender
+            .start_file(FileInfo::new(name.as_bytes(), Some(Position::new(size32))))
+            .map_err(protocol_error)?;
+        self.current = Some(Outgoing {
+            file,
+            progress: Progress::new("↑", name, size),
+        });
         Ok(())
     }
 
-    fn step(&mut self, input: &mut Vec<u8>, wire: &mut Vec<u8>, display: &mut Vec<u8>) -> Result<Flow, String> {
+    fn step(
+        &mut self,
+        input: &mut Vec<u8>,
+        wire: &mut Vec<u8>,
+        display: &mut Vec<u8>,
+    ) -> Result<Flow, String> {
         let mut budget = STEP_BUDGET;
         loop {
             match self.sender.poll() {
@@ -493,13 +566,21 @@ impl Upload {
                         return Err(tr("对方请求了不存在的文件数据"));
                     };
                     let offset = offset.get() as u64;
-                    outgoing.file.seek(SeekFrom::Start(offset)).map_err(|err| crate::trf!("读取文件失败：{err}", err = err))?;
+                    outgoing
+                        .file
+                        .seek(SeekFrom::Start(offset))
+                        .map_err(|err| crate::trf!("读取文件失败：{err}", err = err))?;
                     self.buffer.clear();
-                    (&outgoing.file).take(max_len as u64).read_to_end(&mut self.buffer).map_err(|err| crate::trf!("读取文件失败：{err}", err = err))?;
+                    (&outgoing.file)
+                        .take(max_len as u64)
+                        .read_to_end(&mut self.buffer)
+                        .map_err(|err| crate::trf!("读取文件失败：{err}", err = err))?;
                     if self.buffer.is_empty() {
                         return Err(tr("文件在上传过程中被截短了"));
                     }
-                    self.sender.submit_file(&self.buffer).map_err(protocol_error)?;
+                    self.sender
+                        .submit_file(&self.buffer)
+                        .map_err(protocol_error)?;
                     let sent = offset + self.buffer.len() as u64;
                     outgoing.progress.set(sent, display);
                     continue;
@@ -549,7 +630,14 @@ struct Progress {
 impl Progress {
     fn new(arrow: &'static str, name: String, size: u64) -> Progress {
         let now = Instant::now();
-        Progress { arrow, name, size, done: 0, started: now, shown_at: now }
+        Progress {
+            arrow,
+            name,
+            size,
+            done: 0,
+            started: now,
+            shown_at: now,
+        }
     }
 
     fn advance(&mut self, bytes: u64, display: &mut Vec<u8>) {
@@ -566,15 +654,28 @@ impl Progress {
     fn show(&mut self, display: &mut Vec<u8>) {
         self.shown_at = Instant::now();
         // 空文件算 100%
-        let percent = (self.done * 100).checked_div(self.size).map_or(100, |percent| percent.min(100));
+        let percent = (self.done * 100)
+            .checked_div(self.size)
+            .map_or(100, |percent| percent.min(100));
         let seconds = self.started.elapsed().as_secs_f64().max(0.001);
         let speed = format_size((self.done as f64 / seconds) as u64);
-        let text = format!("ZMODEM {} {}  {percent}%  {} / {}  {speed}/s", self.arrow, self.name, format_size(self.done), format_size(self.size));
+        let text = format!(
+            "ZMODEM {} {}  {percent}%  {} / {}  {speed}/s",
+            self.arrow,
+            self.name,
+            format_size(self.done),
+            format_size(self.size)
+        );
         display.extend_from_slice(dim_line(&text).as_bytes());
     }
 
     fn finish(self, result: &str, display: &mut Vec<u8>) {
-        let text = format!("ZMODEM {} {}  {}  {result}", self.arrow, self.name, format_size(self.size));
+        let text = format!(
+            "ZMODEM {} {}  {}  {result}",
+            self.arrow,
+            self.name,
+            format_size(self.size)
+        );
         display.extend_from_slice(dim_line(&text).as_bytes());
         display.extend_from_slice(b"\r\n");
     }
@@ -601,7 +702,10 @@ fn format_size(bytes: u64) -> String {
 
 fn safe_file_name(name: &str) -> String {
     let last = name.rsplit(['/', '\\']).next().unwrap_or_default();
-    let cleaned: String = last.chars().filter(|c| !c.is_control() && !"<>:\"|?*".contains(*c)).collect();
+    let cleaned: String = last
+        .chars()
+        .filter(|c| !c.is_control() && !"<>:\"|?*".contains(*c))
+        .collect();
     let cleaned = cleaned.trim().trim_start_matches('.').to_string();
     if cleaned.is_empty() {
         return "zmodem-download".to_string();
@@ -642,7 +746,10 @@ mod tests {
         assert_eq!(start.data, &SZ_START[3..]);
 
         // lrzsz 的 rz 发的 ZRINIT：标志 CANFDX|CANOVIO|CANFC32 = 0x23，CRC16 = be50
-        assert_eq!(is_start(b"**\x18B0100000023be50\r\x8a\x11"), Some(Direction::Upload));
+        assert_eq!(
+            is_start(b"**\x18B0100000023be50\r\x8a\x11"),
+            Some(Direction::Upload)
+        );
         assert_eq!(is_start(b"plain text ** \x18 B0"), None);
         assert_eq!(is_start(b"**\x18B02"), None);
     }
@@ -674,13 +781,17 @@ mod tests {
     fn known_byte_sequences() {
         // 我们的发送端第一件事就是发 ZRQINIT
         let mut sender = Sender::new().unwrap();
-        let Action::WriteWire(bytes) = sender.poll() else { panic!("sender should start with ZRQINIT") };
+        let Action::WriteWire(bytes) = sender.poll() else {
+            panic!("sender should start with ZRQINIT")
+        };
         // 十六进制头 + CRC16 与 lrzsz 相同；行尾 lrzsz 用 \r\x8a\x11，zmodem2 用 \r\n\x11，两边都接受
         assert_eq!(&bytes[..bytes.len() - 2], b"**\x18B00000000000000\r");
 
         // 接收端的 ZRINIT：缓冲 0、CANFDX|CANOVIO|CANFC32，CRC16 与 lrzsz 的 rz 相同
         let mut receiver = Receiver::with_flow_control(0, true).unwrap();
-        let Action::WriteWire(bytes) = receiver.poll() else { panic!("receiver should start with ZRINIT") };
+        let Action::WriteWire(bytes) = receiver.poll() else {
+            panic!("receiver should start with ZRINIT")
+        };
         assert_eq!(&bytes[..bytes.len() - 2], b"**\x18B0100000023be50\r");
     }
 
@@ -727,13 +838,20 @@ mod tests {
         fs::write(downloads.join("data.bin"), b"existing").unwrap();
 
         let mut remote = Transfer::new(Direction::Upload, PathBuf::new()).unwrap();
-        remote.select_files(vec![source_dir.join("data.bin"), source_dir.join("empty.txt")]);
+        remote.select_files(vec![
+            source_dir.join("data.bin"),
+            source_dir.join("empty.txt"),
+        ]);
         let mut local = Transfer::new(Direction::Download, downloads.clone()).unwrap();
         pump(&mut local, &mut remote);
 
         let shown = String::from_utf8_lossy(&local.take_display()).to_string();
         assert!(!shown.contains("失败"), "{shown}");
-        assert_eq!(fs::read(downloads.join("data.bin")).unwrap(), b"existing", "不覆盖已有文件");
+        assert_eq!(
+            fs::read(downloads.join("data.bin")).unwrap(),
+            b"existing",
+            "不覆盖已有文件"
+        );
         assert_eq!(fs::read(downloads.join("data (1).bin")).unwrap(), big);
         assert_eq!(fs::read(downloads.join("empty.txt")).unwrap(), b"");
         let _ = fs::remove_dir_all(&dir);
@@ -762,11 +880,19 @@ mod tests {
         }
         assert!(local.finished() && remote.finished());
         // "hello" 是文件最后一个子包：ZDLE ZCRCW('k') 后跟 CRC32("hellok") 小端 = 0x0c8f61ee
-        let window = sent.windows(11).find(|window| window.starts_with(b"hello\x18k")).expect("hello subpacket");
+        let window = sent
+            .windows(11)
+            .find(|window| window.starts_with(b"hello\x18k"))
+            .expect("hello subpacket");
         assert_eq!(&window[7..], &[0xee, 0x61, 0x8f, 0x0c]);
         // CAN / XON / XOFF / DEL 都经 ZDLE 转义（值 ^ 0x40）
-        assert!(sent.windows(8).any(|window| window == [0x18, 0x58, 0x18, 0x51, 0x18, 0x53, 0x18, 0x6c]));
-        assert_eq!(fs::read(dir.join("downloads/ctrl.bin")).unwrap(), [0x18, 0x11, 0x13, 0x7f]);
+        assert!(sent
+            .windows(8)
+            .any(|window| window == [0x18, 0x58, 0x18, 0x51, 0x18, 0x53, 0x18, 0x6c]));
+        assert_eq!(
+            fs::read(dir.join("downloads/ctrl.bin")).unwrap(),
+            [0x18, 0x11, 0x13, 0x7f]
+        );
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -786,14 +912,22 @@ mod tests {
             remote.input(&to_remote);
             let to_local = remote.take_wire();
             local.input(&to_local);
-            if fs::read_dir(&downloads).map(|entries| entries.count()).unwrap_or(0) > 0 {
+            if fs::read_dir(&downloads)
+                .map(|entries| entries.count())
+                .unwrap_or(0)
+                > 0
+            {
                 break;
             }
         }
         local.cancel();
         assert!(local.finished());
         assert!(local.take_wire().ends_with(CANCEL_SEQUENCE));
-        assert_eq!(fs::read_dir(&downloads).unwrap().count(), 0, "partial file removed");
+        assert_eq!(
+            fs::read_dir(&downloads).unwrap().count(),
+            0,
+            "partial file removed"
+        );
 
         // 对方收到 5 个 CAN 也认为被取消
         remote.input(CANCEL_SEQUENCE);

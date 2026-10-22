@@ -91,7 +91,11 @@ pub struct AiPromptPreset {
 
 impl Default for AiPromptPreset {
     fn default() -> Self {
-        Self { id: String::new(), name: String::new(), prompt: String::new() }
+        Self {
+            id: String::new(),
+            name: String::new(),
+            prompt: String::new(),
+        }
     }
 }
 
@@ -110,7 +114,7 @@ pub fn default_ai_prompt_presets() -> Vec<AiPromptPreset> {
         AiPromptPreset {
             id: "diagnose".into(),
             name: "报错排查".into(),
-            prompt: "根据报错和终端上下文定位最可能的原因，区分已知事实与推测，并给出按风险从低到高的排查步骤。不要假定你可以执行命令。回复使用用户当前的语言。".into(),
+            prompt: "根据报错和终端上下文定位最可能的原因，区分已知事实与推测，并给出按风险从低到高的排查步骤。需要现场验证时请求终端工具，并在用户确认执行后根据结果继续分析；未拿到结果前不要声称已验证。回复使用用户当前的语言。".into(),
         },
         AiPromptPreset {
             id: "explain".into(),
@@ -263,7 +267,10 @@ pub struct TelnetOptions {
 
 impl Default for TelnetOptions {
     fn default() -> Self {
-        TelnetOptions { host: String::new(), port: 23 }
+        TelnetOptions {
+            host: String::new(),
+            port: 23,
+        }
     }
 }
 
@@ -442,7 +449,11 @@ pub struct SshSettings {
 
 impl Default for SshSettings {
     fn default() -> Self {
-        SshSettings { verify_host_keys: true, known_hosts_file: String::new(), use_agent: true }
+        SshSettings {
+            verify_host_keys: true,
+            known_hosts_file: String::new(),
+            use_agent: true,
+        }
     }
 }
 
@@ -488,7 +499,14 @@ pub struct HighlightRule {
 
 impl Default for HighlightRule {
     fn default() -> Self {
-        HighlightRule { pattern: String::new(), ignore_case: false, foreground: None, background: None, bold: false, enabled: true }
+        HighlightRule {
+            pattern: String::new(),
+            ignore_case: false,
+            foreground: None,
+            background: None,
+            bold: false,
+            enabled: true,
+        }
     }
 }
 
@@ -508,12 +526,24 @@ fn default_highlight_rules() -> Vec<HighlightRule> {
             true,
             1,
         ),
-        rule(r"\b(warn(ing)?s?|deprecated|caution|retry(ing)?|closed|disconnected|exited|skipped|stopped|terminated)\b|警告|注意|重试", true, 3),
-        rule(r"\b(ok|success(ful(ly)?)?|succeeded|passed|done|completed?|true|yes|valid)\b|成功|完成|通过", true, 2),
+        rule(
+            r"\b(warn(ing)?s?|deprecated|caution|retry(ing)?|closed|disconnected|exited|skipped|stopped|terminated)\b|警告|注意|重试",
+            true,
+            3,
+        ),
+        rule(
+            r"\b(ok|success(ful(ly)?)?|succeeded|passed|done|completed?|true|yes|valid)\b|成功|完成|通过",
+            true,
+            2,
+        ),
         // 日志级别区分大小写，免得正文里的 info / debug 也被染色；ERROR、WARN 已被上面两条覆盖
         rule(r"\b(INFO|NOTICE)\b", false, 2),
         rule(r"\b(DEBUG|TRACE|VERBOSE)\b", false, 4),
-        rule(r"\b[0-9]{1,3}(\.[0-9]{1,3}){3}(/[0-9]{1,2}|:[0-9]{1,5})?\b", false, 6),
+        rule(
+            r"\b[0-9]{1,3}(\.[0-9]{1,3}){3}(/[0-9]{1,2}|:[0-9]{1,5})?\b",
+            false,
+            6,
+        ),
         // IPv6 只认完整 8 段或带 :: 的缩写，免得 12:34:56 这类时间被当成地址；:: 两侧至少一侧有段，免得 std::io 被染色
         rule(
             r"(\b[0-9a-f]{1,4}(:[0-9a-f]{1,4}){7}\b|\b[0-9a-f]{1,4}(:[0-9a-f]{1,4}){0,6}::([0-9a-f]{1,4}(:[0-9a-f]{1,4}){0,6}\b)?|::[0-9a-f]{1,4}(:[0-9a-f]{1,4}){0,6}\b)(/[0-9]{1,3})?",
@@ -521,18 +551,30 @@ fn default_highlight_rules() -> Vec<HighlightRule> {
             6,
         ),
         rule(r"\b[0-9a-f]{2}([:-][0-9a-f]{2}){5}\b", true, 6),
-        rule(r"\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b", true, 12),
+        rule(
+            r"\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b",
+            true,
+            12,
+        ),
         rule(
             r"\b[0-9]{4}[-/][0-9]{2}[-/][0-9]{2}([T ][0-9]{2}:[0-9]{2}(:[0-9]{2}([.,][0-9]+)?)?)?\b|\b[0-9]{1,2}:[0-9]{2}(:[0-9]{2}([.,][0-9]+)?)?\b",
             false,
             10,
         ),
         // ls -l / syslog 里的「Mar  4」和 date 输出的星期；月份要带日期，免得正文里的 May 被染色
-        rule(r"\b(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) +[0-9]{1,2}\b|\b(Mon|Tue|Wed|Thu|Fri|Sat|Sun)\b", false, 10),
+        rule(
+            r"\b(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) +[0-9]{1,2}\b|\b(Mon|Tue|Wed|Thu|Fri|Sat|Sun)\b",
+            false,
+            10,
+        ),
         rule(r"\b(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\b", false, 5),
         rule(r#""[^"\n]*""#, false, 2),
         // 数字放最后：IP、时间、UUID 里的数字归前面的规则。带单位的大小 / 时长整体算一个数
-        rule(r"\b[0-9]+(\.[0-9]+)?([KMGTP]i?B?|[kmgt]b?|ms|s|h|d)?\b%?", false, 4),
+        rule(
+            r"\b[0-9]+(\.[0-9]+)?([KMGTP]i?B?|[kmgt]b?|ms|s|h|d)?\b%?",
+            false,
+            4,
+        ),
     ]
 }
 
@@ -553,21 +595,96 @@ pub fn default_hotkeys() -> BTreeMap<String, Vec<String>> {
     let pairs: Vec<(&str, Vec<String>)> = vec![
         ("copy", vec![format!("{cmd}-C")]),
         ("paste", vec![format!("{cmd}-V")]),
-        ("clear", vec![if mac { "⌘-K".into() } else { String::new() }]),
+        (
+            "clear",
+            vec![if mac { "⌘-K".into() } else { String::new() }],
+        ),
         ("select-all", vec![format!("{cmd}-A")]),
-        ("zoom-in", vec![if mac { "⌘-=".into() } else { "Ctrl-=".into() }]),
-        ("zoom-out", vec![if mac { "⌘--".into() } else { "Ctrl--".into() }]),
-        ("reset-zoom", vec![if mac { "⌘-0".into() } else { "Ctrl-0".into() }]),
-        ("home", vec![if mac { "⌘-Left".into() } else { String::new() }]),
-        ("end", vec![if mac { "⌘-Right".into() } else { String::new() }]),
-        ("previous-word", vec![if mac { "⌥-Left".into() } else { "Ctrl-Left".into() }]),
-        ("next-word", vec![if mac { "⌥-Right".into() } else { "Ctrl-Right".into() }]),
-        ("delete-previous-word", vec![if mac { "⌥-Backspace".into() } else { "Ctrl-Backspace".into() }]),
-        ("delete-line", vec![if mac { "⌘-Backspace".into() } else { String::new() }]),
-        ("delete-next-word", vec![if mac { "⌥-Delete".into() } else { "Ctrl-Delete".into() }]),
+        (
+            "zoom-in",
+            vec![if mac { "⌘-=".into() } else { "Ctrl-=".into() }],
+        ),
+        (
+            "zoom-out",
+            vec![if mac { "⌘--".into() } else { "Ctrl--".into() }],
+        ),
+        (
+            "reset-zoom",
+            vec![if mac { "⌘-0".into() } else { "Ctrl-0".into() }],
+        ),
+        (
+            "home",
+            vec![if mac {
+                "⌘-Left".into()
+            } else {
+                String::new()
+            }],
+        ),
+        (
+            "end",
+            vec![if mac {
+                "⌘-Right".into()
+            } else {
+                String::new()
+            }],
+        ),
+        (
+            "previous-word",
+            vec![if mac {
+                "⌥-Left".into()
+            } else {
+                "Ctrl-Left".into()
+            }],
+        ),
+        (
+            "next-word",
+            vec![if mac {
+                "⌥-Right".into()
+            } else {
+                "Ctrl-Right".into()
+            }],
+        ),
+        (
+            "delete-previous-word",
+            vec![if mac {
+                "⌥-Backspace".into()
+            } else {
+                "Ctrl-Backspace".into()
+            }],
+        ),
+        (
+            "delete-line",
+            vec![if mac {
+                "⌘-Backspace".into()
+            } else {
+                String::new()
+            }],
+        ),
+        (
+            "delete-next-word",
+            vec![if mac {
+                "⌥-Delete".into()
+            } else {
+                "Ctrl-Delete".into()
+            }],
+        ),
         ("search", vec![format!("{cmd}-F")]),
-        ("pane-focus-all", vec![if mac { "⌘-Shift-I".into() } else { "Ctrl-Shift-I".into() }]),
-        ("focus-all-tabs", vec![if mac { "⌘-⌥-Shift-I".into() } else { "Ctrl-Alt-Shift-I".into() }]),
+        (
+            "pane-focus-all",
+            vec![if mac {
+                "⌘-Shift-I".into()
+            } else {
+                "Ctrl-Shift-I".into()
+            }],
+        ),
+        (
+            "focus-all-tabs",
+            vec![if mac {
+                "⌘-⌥-Shift-I".into()
+            } else {
+                "Ctrl-Alt-Shift-I".into()
+            }],
+        ),
         ("copy-current-path", vec![]),
         // 有选区时复制，否则发 ^C；默认不绑定，免得 Ctrl-C 行为出乎意料
         ("ctrl-c", vec![]),
@@ -577,17 +694,48 @@ pub fn default_hotkeys() -> BTreeMap<String, Vec<String>> {
         ("scroll-down", vec!["Ctrl-Shift-Down".into()]),
         ("scroll-page-down", vec![format!("{alt}-PageDown")]),
         ("scroll-to-bottom", vec!["Shift-PageDown".into()]),
-        ("settings", vec![if mac { "⌘-,".into() } else { "Ctrl-,".into() }]),
+        (
+            "settings",
+            vec![if mac { "⌘-,".into() } else { "Ctrl-,".into() }],
+        ),
         ("new-tab", vec![format!("{cmd}-T")]),
         ("new-window", vec![format!("{cmd}-N")]),
-        ("toggle-fullscreen", vec![if mac { "Ctrl-⌘-F".into() } else { "F11".into() }]),
+        (
+            "toggle-fullscreen",
+            vec![if mac {
+                "Ctrl-⌘-F".into()
+            } else {
+                "F11".into()
+            }],
+        ),
         ("close-tab", vec![format!("{cmd}-W")]),
-        ("reopen-tab", vec![if mac { "⌘-Shift-T".into() } else { "Ctrl-Shift-Alt-T".into() }]),
+        (
+            "reopen-tab",
+            vec![if mac {
+                "⌘-Shift-T".into()
+            } else {
+                "Ctrl-Shift-Alt-T".into()
+            }],
+        ),
         ("rename-tab", vec![format!("{cmd}-R")]),
         ("next-tab", vec!["Ctrl-Tab".into()]),
         ("previous-tab", vec!["Ctrl-Shift-Tab".into()]),
-        ("move-tab-left", vec![if mac { "⌘-Shift-Left".into() } else { "Ctrl-Shift-PageUp".into() }]),
-        ("move-tab-right", vec![if mac { "⌘-Shift-Right".into() } else { "Ctrl-Shift-PageDown".into() }]),
+        (
+            "move-tab-left",
+            vec![if mac {
+                "⌘-Shift-Left".into()
+            } else {
+                "Ctrl-Shift-PageUp".into()
+            }],
+        ),
+        (
+            "move-tab-right",
+            vec![if mac {
+                "⌘-Shift-Right".into()
+            } else {
+                "Ctrl-Shift-PageDown".into()
+            }],
+        ),
         ("duplicate-tab", vec![]),
         ("restart-tab", vec![]),
         ("restart-ssh-session", vec![]),
@@ -600,10 +748,38 @@ pub fn default_hotkeys() -> BTreeMap<String, Vec<String>> {
         ("open-sftp", vec![]),
         // 全局显示 / 隐藏窗口。Ctrl-Space 在 macOS 上是切换输入法，默认不绑定
         ("toggle-window", vec![]),
-        ("explode-tab", vec![if mac { "⌘-Shift-.".into() } else { "Ctrl-Shift-.".into() }]),
-        ("combine-tabs", vec![if mac { "⌘-Shift-,".into() } else { "Ctrl-Shift-,".into() }]),
-        ("split-right", vec![if mac { "⌘-Shift-D".into() } else { "Ctrl-Shift-D".into() }]),
-        ("split-bottom", vec![if mac { "⌘-D".into() } else { "Ctrl-Shift-E".into() }]),
+        (
+            "explode-tab",
+            vec![if mac {
+                "⌘-Shift-.".into()
+            } else {
+                "Ctrl-Shift-.".into()
+            }],
+        ),
+        (
+            "combine-tabs",
+            vec![if mac {
+                "⌘-Shift-,".into()
+            } else {
+                "Ctrl-Shift-,".into()
+            }],
+        ),
+        (
+            "split-right",
+            vec![if mac {
+                "⌘-Shift-D".into()
+            } else {
+                "Ctrl-Shift-D".into()
+            }],
+        ),
+        (
+            "split-bottom",
+            vec![if mac {
+                "⌘-D".into()
+            } else {
+                "Ctrl-Shift-E".into()
+            }],
+        ),
         ("split-left", vec![]),
         ("split-top", vec![]),
         ("pane-nav-right", vec![format!("{cmd}-{alt}-Right")]),
@@ -613,14 +789,35 @@ pub fn default_hotkeys() -> BTreeMap<String, Vec<String>> {
         ("pane-nav-previous", vec![format!("{cmd}-{alt}-[")]),
         ("pane-nav-next", vec![format!("{cmd}-{alt}-]")]),
         ("pane-maximize", vec![format!("{cmd}-{alt}-Enter")]),
-        ("close-pane", vec![if mac { "⌘-Shift-W".into() } else { "Ctrl-Shift-Alt-W".into() }]),
+        (
+            "close-pane",
+            vec![if mac {
+                "⌘-Shift-W".into()
+            } else {
+                "Ctrl-Shift-Alt-W".into()
+            }],
+        ),
         ("pane-increase-vertical", vec![]),
         ("pane-decrease-vertical", vec![]),
         ("pane-increase-horizontal", vec![]),
         ("pane-decrease-horizontal", vec![]),
         ("profile-selector", vec![format!("{cmd}-E")]),
-        ("switch-profile", vec![if mac { "⌘-Shift-E".into() } else { "Ctrl-Shift-Alt-E".into() }]),
-        ("command-selector", vec![if mac { "⌘-Shift-P".into() } else { "Ctrl-Shift-P".into() }]),
+        (
+            "switch-profile",
+            vec![if mac {
+                "⌘-Shift-E".into()
+            } else {
+                "Ctrl-Shift-Alt-E".into()
+            }],
+        ),
+        (
+            "command-selector",
+            vec![if mac {
+                "⌘-Shift-P".into()
+            } else {
+                "Ctrl-Shift-P".into()
+            }],
+        ),
         ("serial", vec![format!("{alt}-K")]),
     ];
     let mut hotkeys = BTreeMap::new();
@@ -629,7 +826,11 @@ pub fn default_hotkeys() -> BTreeMap<String, Vec<String>> {
         hotkeys.insert(action.to_string(), keys);
     }
     for index in 1..=9 {
-        let key = if mac { format!("⌘-{index}") } else { format!("Alt-{index}") };
+        let key = if mac {
+            format!("⌘-{index}")
+        } else {
+            format!("Alt-{index}")
+        };
         hotkeys.insert(format!("tab-{index}"), vec![key]);
         hotkeys.insert(format!("pane-nav-{index}"), vec![]);
     }
@@ -655,18 +856,26 @@ pub fn migrate(mut value: Value) -> Value {
 
 /// 解析配置：迁移 → 反序列化 → 补新增的默认快捷键
 pub fn parse(json: &str) -> Result<Config, String> {
-    let raw: Value = serde_json::from_str(json).map_err(|err| trf!("配置文件格式错误：{err}", err = err))?;
+    let raw: Value =
+        serde_json::from_str(json).map_err(|err| trf!("配置文件格式错误：{err}", err = err))?;
     // serde 的结构体也接受数组形式，"[]" 会被悄悄当成默认配置，必须显式拒绝
     if !raw.is_object() {
-        return Err(trf!("配置文件内容错误：{err}", err = "expected a JSON object"));
+        return Err(trf!(
+            "配置文件内容错误：{err}",
+            err = "expected a JSON object"
+        ));
     }
     let migrated = migrate(raw);
     // 更新版本写的配置：旧版本读进来再保存会丢掉不认识的字段，直接拒绝
     let version = migrated.get("version").and_then(Value::as_u64).unwrap_or(0);
     if version > CONFIG_VERSION as u64 {
-        return Err(trf!("配置文件由更新版本的 CTerminal 创建（配置版本 {version}），请升级后再打开", version = version));
+        return Err(trf!(
+            "配置文件由更新版本的 CTerminal 创建（配置版本 {version}），请升级后再打开",
+            version = version
+        ));
     }
-    let mut config: Config = serde_json::from_value(migrated).map_err(|err| trf!("配置文件内容错误：{err}", err = err))?;
+    let mut config: Config = serde_json::from_value(migrated)
+        .map_err(|err| trf!("配置文件内容错误：{err}", err = err))?;
     validate_ai_settings(&config.ai)?;
     for (action, keys) in default_hotkeys() {
         config.hotkeys.entry(action).or_insert(keys);
@@ -698,10 +907,16 @@ pub fn save_to(path: &Path, config: &Config) -> Result<(), String> {
     }
     // 原文件读不出来时（损坏、更新版本写的）界面用默认值运行，这里第一次保存前先把原文件留一份
     if path.exists() && load_from(path).is_err() {
-        let seconds = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|elapsed| elapsed.as_secs()).unwrap_or(0);
+        let seconds = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|elapsed| elapsed.as_secs())
+            .unwrap_or(0);
         let backup = path.with_file_name(format!("config.broken-{seconds}.json"));
         fs::rename(path, &backup).map_err(|err| trf!("备份原配置文件失败：{err}", err = err))?;
-        crate::log::warn(&format!("原配置文件无法读取，已备份为 {}", backup.display()));
+        crate::log::warn(&format!(
+            "原配置文件无法读取，已备份为 {}",
+            backup.display()
+        ));
     }
     let temp = path.with_extension("json.tmp");
     fs::write(&temp, json).map_err(|err| trf!("写入配置失败：{err}", err = err))?;
@@ -773,7 +988,10 @@ pub fn all_profiles(config: &Config) -> Vec<Profile> {
 /// 默认 profile：配置指定的 → 系统默认 shell
 pub fn default_profile(config: &Config) -> Profile {
     let profiles = all_profiles(config);
-    if let Some(found) = profiles.iter().find(|profile| profile.id == config.application.default_profile) {
+    if let Some(found) = profiles
+        .iter()
+        .find(|profile| profile.id == config.application.default_profile)
+    {
         return found.clone();
     }
     let shell = shells::default_shell();
@@ -785,7 +1003,11 @@ pub fn default_profile(config: &Config) -> Profile {
         id,
         name: shell.name,
         is_builtin: true,
-        kind: ProfileKind::Local(LocalOptions { command: shell.command, args: shell.args, ..Default::default() }),
+        kind: ProfileKind::Local(LocalOptions {
+            command: shell.command,
+            args: shell.args,
+            ..Default::default()
+        }),
         ..Default::default()
     }
 }
@@ -796,12 +1018,24 @@ mod tests {
 
     #[test]
     fn profile_hotkeys_and_ligatures_survive_round_trip() {
-        let config = parse(r#"{"version":1,"hotkeys":{"profile:p1":["⌘-Shift-1"]},"terminal":{"ligatures":true}}"#).unwrap();
+        let config = parse(
+            r#"{"version":1,"hotkeys":{"profile:p1":["⌘-Shift-1"]},"terminal":{"ligatures":true}}"#,
+        )
+        .unwrap();
         assert_eq!(config.hotkeys["profile:p1"], ["⌘-Shift-1"]);
         assert!(config.terminal.ligatures);
         assert!(!TerminalSettings::default().ligatures);
         let defaults = default_hotkeys();
-        for action in ["ctrl-c", "copy-current-path", "focus-all-tabs", "pane-nav-9", "tab-20", "toggle-last-tab", "pin-tab", "restart-serial-session"] {
+        for action in [
+            "ctrl-c",
+            "copy-current-path",
+            "focus-all-tabs",
+            "pane-nav-9",
+            "tab-20",
+            "toggle-last-tab",
+            "pin-tab",
+            "restart-serial-session",
+        ] {
             assert!(defaults.contains_key(action), "缺少默认快捷键条目 {action}");
         }
         assert!(defaults["ctrl-c"].is_empty());
@@ -812,7 +1046,11 @@ mod tests {
         let profile = Profile {
             id: "p1".into(),
             name: "db".into(),
-            kind: ProfileKind::Ssh(SshOptions { host: "192.0.2.10".into(), user: "deploy".into(), ..Default::default() }),
+            kind: ProfileKind::Ssh(SshOptions {
+                host: "192.0.2.10".into(),
+                user: "deploy".into(),
+                ..Default::default()
+            }),
             ..Default::default()
         };
         let json = serde_json::to_value(&profile).unwrap();
@@ -825,7 +1063,9 @@ mod tests {
 
     #[test]
     fn missing_fields_take_defaults_and_new_hotkeys_are_added() {
-        let config = parse(r#"{"version":1,"hotkeys":{"copy":["⌘-X"]},"terminal":{"fontSize":20}}"#).unwrap();
+        let config =
+            parse(r#"{"version":1,"hotkeys":{"copy":["⌘-X"]},"terminal":{"fontSize":20}}"#)
+                .unwrap();
         assert_eq!(config.terminal.font_size, 20.0);
         assert_eq!(config.terminal.scrollback_lines, 25000);
         assert_eq!(config.hotkeys["copy"], ["⌘-X"]);
@@ -841,7 +1081,15 @@ mod tests {
         assert_eq!(config.ai, AiSettings::default());
         assert_eq!(config.ai.panel_position, AiPanelPosition::Right);
         assert_eq!(config.ai.active_preset, "general");
-        assert_eq!(config.ai.prompt_presets.iter().map(|preset| preset.id.as_str()).collect::<Vec<_>>(), ["general", "command", "diagnose", "explain"]);
+        assert_eq!(
+            config
+                .ai
+                .prompt_presets
+                .iter()
+                .map(|preset| preset.id.as_str())
+                .collect::<Vec<_>>(),
+            ["general", "command", "diagnose", "explain"]
+        );
         let explicit = parse(r#"{"ai":{"baseUrl":"https://api.example.com/v1","model":"demo","panelPosition":"bottom"}}"#).unwrap();
         assert_eq!(explicit.ai.base_url, "https://api.example.com/v1");
         assert_eq!(explicit.ai.model, "demo");
@@ -856,7 +1104,10 @@ mod tests {
         let loaded = parse(&saved).unwrap();
         assert_eq!(loaded.ai.system_prompt, "Use concise examples");
         assert_eq!(loaded.ai.active_preset, "diagnose");
-        assert_eq!(loaded.ai.prompt_presets[0].prompt, "Inspect the error carefully");
+        assert_eq!(
+            loaded.ai.prompt_presets[0].prompt,
+            "Inspect the error carefully"
+        );
 
         for invalid in [
             r#"{"ai":{"promptPresets":[]}}"#,
@@ -866,10 +1117,16 @@ mod tests {
             r#"{"ai":{"promptPresets":[{"id":"x","name":" ","prompt":"p"}],"activePreset":"x"}}"#,
             r#"{"ai":{"promptPresets":[{"id":"x","name":"X","prompt":"  "}],"activePreset":"x"}}"#,
         ] {
-            assert!(parse(invalid).is_err(), "expected invalid config: {invalid}");
+            assert!(
+                parse(invalid).is_err(),
+                "expected invalid config: {invalid}"
+            );
         }
 
-        let path = std::env::temp_dir().join(format!("cterm-invalid-ai-config-{}.json", std::process::id()));
+        let path = std::env::temp_dir().join(format!(
+            "cterm-invalid-ai-config-{}.json",
+            std::process::id()
+        ));
         let mut invalid_save = Config::default();
         invalid_save.ai.prompt_presets.clear();
         assert!(save_to(&path, &invalid_save).is_err());
@@ -887,8 +1144,16 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("cterm-config-{}", std::process::id()));
         let path = dir.join("config.json");
         let mut config = Config::default();
-        config.profiles.push(Profile { id: "local:zsh".into(), is_builtin: true, ..Default::default() });
-        config.profiles.push(Profile { id: "mine".into(), name: "mine".into(), ..Default::default() });
+        config.profiles.push(Profile {
+            id: "local:zsh".into(),
+            is_builtin: true,
+            ..Default::default()
+        });
+        config.profiles.push(Profile {
+            id: "mine".into(),
+            name: "mine".into(),
+            ..Default::default()
+        });
         save_to(&path, &config).unwrap();
         let loaded = load_from(&path).unwrap();
         assert_eq!(loaded.profiles.len(), 1);
@@ -909,7 +1174,12 @@ mod tests {
         let backups: Vec<_> = fs::read_dir(&dir)
             .unwrap()
             .flatten()
-            .filter(|entry| entry.file_name().to_string_lossy().starts_with("config.broken-"))
+            .filter(|entry| {
+                entry
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with("config.broken-")
+            })
             .collect();
         assert_eq!(backups.len(), 1);
         assert_eq!(fs::read_to_string(backups[0].path()).unwrap(), json);
@@ -924,7 +1194,10 @@ mod tests {
     fn config_never_contains_secret_fields() {
         // 秘密只进钥匙串：配置结构里不允许出现这些字段名，防止以后被“简化”回明文
         let mut config = Config::default();
-        config.profiles.push(Profile { kind: ProfileKind::Ssh(SshOptions::default()), ..Default::default() });
+        config.profiles.push(Profile {
+            kind: ProfileKind::Ssh(SshOptions::default()),
+            ..Default::default()
+        });
         let json = serde_json::to_string(&config).unwrap().to_lowercase();
         for forbidden in ["password", "passphrase", "secret", "token"] {
             assert!(!json.contains(forbidden), "config contains {forbidden}");
@@ -938,7 +1211,11 @@ mod tests {
             foreground: "#cacaca".into(),
             background: "#171717".into(),
             cursor: "#bbbbbb".into(),
-            colors: Palette::default().ansi.iter().map(|color| format!("#{color:06x}")).collect(),
+            colors: Palette::default()
+                .ansi
+                .iter()
+                .map(|color| format!("#{color:06x}"))
+                .collect(),
         };
         assert_eq!(scheme.to_palette().unwrap(), Palette::default());
     }
@@ -956,13 +1233,20 @@ mod tests {
 
     #[test]
     fn unknown_fields_are_ignored() {
-        let config = parse(r#"{"version":1,"futureThing":1,"terminal":{"unknownKey":true,"cursor":"beam"}}"#).unwrap();
+        let config = parse(
+            r#"{"version":1,"futureThing":1,"terminal":{"unknownKey":true,"cursor":"beam"}}"#,
+        )
+        .unwrap();
         assert_eq!(config.terminal.cursor, "beam");
     }
 
     #[test]
     fn old_or_odd_version_values_are_migrated() {
-        for json in [r#"{"version":0}"#, r#"{"version":"1"}"#, r#"{"version":null}"#] {
+        for json in [
+            r#"{"version":0}"#,
+            r#"{"version":"1"}"#,
+            r#"{"version":null}"#,
+        ] {
             assert_eq!(parse(json).unwrap().version, CONFIG_VERSION, "{json}");
         }
     }
@@ -990,7 +1274,8 @@ mod tests {
 
     #[test]
     fn missing_file_loads_defaults() {
-        let path = std::env::temp_dir().join(format!("cterm-missing-{}/config.json", std::process::id()));
+        let path =
+            std::env::temp_dir().join(format!("cterm-missing-{}/config.json", std::process::id()));
         assert_eq!(load_from(&path).unwrap(), Config::default());
     }
 }

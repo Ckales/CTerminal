@@ -22,7 +22,30 @@ String tr(String source, [Map<String, Object?> args = const {}]) {
 }
 
 const _english = <String, String>{
-  'Ctrl/⌘ Enter 发送 · 手动附加终端内容': 'Ctrl/⌘ Enter to send · Attach terminal context manually',
+  '执行失败': 'Execution failed',
+  '执行超时，命令可能仍在运行': 'Execution timed out; the command may still be running',
+  '终端已断开，执行结果未知': 'Terminal disconnected; execution outcome is unknown',
+  '执行结果未知': 'Execution outcome is unknown',
+  '输出过长，已截断': 'Output was truncated because it was too long',
+
+  '终端已重启，请发送新消息开始对话': 'Terminal restarted. Send a new message to start a conversation.',
+  '用户拒绝执行，未运行命令。': 'The user declined execution. No command was run.',
+
+  '等待确认执行': 'Waiting for execution approval',
+  '正在停止命令…': 'Stopping command…',
+  '工具调用格式无效': 'Invalid tool call format',
+  '正在执行命令…': 'Running command…',
+  '已拒绝执行': 'Execution declined',
+  '已达到本轮命令上限，请发送新消息继续': 'Command limit reached. Send a new message to continue.',
+  '停止命令': 'Stop command',
+  '确认在「{terminal}」执行？': 'Run in “{terminal}”?',
+  '请确认目标终端处于 shell 提示符。执行输出将发送给 AI 继续分析。': 'Confirm the target terminal is at a shell prompt. Command output will be sent to AI for analysis.',
+  '确认执行': 'Run command',
+  '拒绝执行': 'Decline',
+  '执行状态：{status}': 'Execution status: {status}',
+  '命令退出码：{code}': 'Command exit code: {code}',
+
+  'Enter 发送 · Shift+Enter 换行 · 手动附加终端内容': 'Enter to send · Shift+Enter for a new line · Attach terminal context manually',
   '按当前预设重新生成': 'Regenerate with current preset',
   '保存后对后续请求生效；留空则采用上方预设内容。': 'Applies to subsequent requests after saving. Leave blank to use the preset instructions.',
   '已停止': 'Stopped',

@@ -30,7 +30,16 @@ fn fifty_megabytes_of_colored_output() {
         bold_is_bright: true,
         history: None,
     };
-    let (session, tx) = Session::new(options, WinSize { cols: 200, rows: 60, cell_width: 8, cell_height: 16 }, sink);
+    let (session, tx) = Session::new(
+        options,
+        WinSize {
+            cols: 200,
+            rows: 60,
+            cell_width: 8,
+            cell_height: 16,
+        },
+        sink,
+    );
 
     let mut chunk = Vec::new();
     for line in 0..2000 {
@@ -68,8 +77,17 @@ fn fifty_megabytes_of_colored_output() {
     );
 
     // 一个字节都没丢：最后一块的最后一行在屏幕上
-    assert!(screen_text(&session.frame()).contains("01999"), "最后一行没有出现在屏幕上");
+    assert!(
+        screen_text(&session.frame()).contains("01999"),
+        "最后一行没有出现在屏幕上"
+    );
     // 阈值依据见 MIN_SPEED / MAX_FRAME 注释：挡数量级的退化，不挡 CI 机器的正常抖动
-    assert!(speed >= MIN_SPEED, "吞吐 {speed:.1} MB/s 低于 {MIN_SPEED} MB/s");
-    assert!(slowest <= MAX_FRAME, "最慢一帧 {slowest:?} 超过 {MAX_FRAME:?}");
+    assert!(
+        speed >= MIN_SPEED,
+        "吞吐 {speed:.1} MB/s 低于 {MIN_SPEED} MB/s"
+    );
+    assert!(
+        slowest <= MAX_FRAME,
+        "最慢一帧 {slowest:?} 超过 {MAX_FRAME:?}"
+    );
 }

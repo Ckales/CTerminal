@@ -30,7 +30,8 @@ pub struct Highlight {
 }
 
 /// 前后是空白或行首尾的 10 位权限串，后面可能跟 ACL / SELinux 标记
-const PERMISSIONS_PATTERN: &str = r"(?:^|\s)([-bcdlps][r-][w-][xsS-][r-][w-][xsS-][r-][w-][xtT-][.+@]?)(?:\s|$)";
+const PERMISSIONS_PATTERN: &str =
+    r"(?:^|\s)([-bcdlps][r-][w-][xsS-][r-][w-][xsS-][r-][w-][xtT-][.+@]?)(?:\s|$)";
 
 /// 权限串里一个字符的颜色：类型位紫，r 蓝，w 黄，x/s/t 红，- 黄绿；尾部标记不改
 fn permission_style(index: usize, byte: u8) -> Option<Style> {
@@ -42,12 +43,19 @@ fn permission_style(index: usize, byte: u8) -> Option<Style> {
         (_, b'x' | b's' | b'S' | b't' | b'T') => 1,
         _ => return None,
     };
-    Some(Style { foreground: Some(color), background: None, bold: false })
+    Some(Style {
+        foreground: Some(color),
+        background: None,
+        bold: false,
+    })
 }
 
 fn build_regex(pattern: &str, ignore_case: bool) -> Result<Regex, regex::Error> {
     // 限制编译后大小，防止一条规则吃掉大量内存
-    RegexBuilder::new(pattern).case_insensitive(ignore_case).size_limit(1 << 20).build()
+    RegexBuilder::new(pattern)
+        .case_insensitive(ignore_case)
+        .size_limit(1 << 20)
+        .build()
 }
 
 /// 正则写法有误时返回错误说明，正确返回空串（设置页校验用）
@@ -69,7 +77,10 @@ pub fn compile(rules: &[HighlightRule], permissions: bool) -> Vec<Highlight> {
     let mut highlights = Vec::new();
     if permissions {
         let regex = build_regex(PERMISSIONS_PATTERN, false).expect("内置权限串正则必须合法");
-        highlights.push(Highlight { regex, paint: Paint::Permissions });
+        highlights.push(Highlight {
+            regex,
+            paint: Paint::Permissions,
+        });
     }
     for rule in rules {
         if !rule.enabled || rule.pattern.is_empty() {
@@ -92,7 +103,12 @@ pub fn compile(rules: &[HighlightRule], permissions: bool) -> Vec<Highlight> {
 
 /// 给一行的文本段套高亮。`ansi` 是已应用 OSC 4 覆盖的 16 色，`default_fg` 是默认前景色。
 /// 只改前景为默认色、背景为默认背景的文字，程序自己上过色的保持原样。
-pub fn apply(runs: Vec<Run>, highlights: &[Highlight], ansi: &[u32; 16], default_fg: u32) -> Vec<Run> {
+pub fn apply(
+    runs: Vec<Run>,
+    highlights: &[Highlight],
+    ansi: &[u32; 16],
+    default_fg: u32,
+) -> Vec<Run> {
     if highlights.is_empty() {
         return runs;
     }
@@ -158,7 +174,9 @@ fn paint(text: &str, highlights: &[Highlight]) -> Option<Vec<Option<Style>>> {
             }
             Paint::Permissions => {
                 for captures in highlight.regex.captures_iter(text) {
-                    let Some(matched) = captures.get(1) else { continue };
+                    let Some(matched) = captures.get(1) else {
+                        continue;
+                    };
                     found = true;
                     for (index, byte) in matched.as_str().bytes().enumerate() {
                         if let Some(style) = permission_style(index, byte) {
@@ -194,7 +212,11 @@ mod tests {
     use super::*;
 
     fn rule(pattern: &str, foreground: u8) -> HighlightRule {
-        HighlightRule { pattern: pattern.into(), foreground: Some(foreground), ..HighlightRule::default() }
+        HighlightRule {
+            pattern: pattern.into(),
+            foreground: Some(foreground),
+            ..HighlightRule::default()
+        }
     }
 
     #[test]
@@ -216,7 +238,11 @@ mod tests {
         let mut previous = None;
         for (index, character) in text.char_indices() {
             let style = owner[index];
-            if let Some(Style { foreground: Some(color), .. }) = style {
+            if let Some(Style {
+                foreground: Some(color),
+                ..
+            }) = style
+            {
                 match segments.last_mut() {
                     Some(last) if previous == style => last.0.push(character),
                     _ => segments.push((character.to_string(), color)),
@@ -231,18 +257,44 @@ mod tests {
     fn default_rules_match_expected_text() {
         let config = crate::config::Config::default();
         let highlights = compile(&config.highlight_rules, false);
-        assert_eq!(highlights.len(), config.highlight_rules.len(), "默认规则都要能编译");
-        let hits = |text: &str| -> Vec<String> { segments(text, &highlights).into_iter().map(|(text, _)| text).collect() };
+        assert_eq!(
+            highlights.len(),
+            config.highlight_rules.len(),
+            "默认规则都要能编译"
+        );
+        let hits = |text: &str| -> Vec<String> {
+            segments(text, &highlights)
+                .into_iter()
+                .map(|(text, _)| text)
+                .collect()
+        };
 
-        for expected in ["fe80::1", "::1", "2001:db8::8a2e:370:7334", "fe80::1c2:3aff:fe4b:5d6e/64", "192.0.2.10/24", "00:1a:2b:3c:4d:5e"] {
+        for expected in [
+            "fe80::1",
+            "::1",
+            "2001:db8::8a2e:370:7334",
+            "fe80::1c2:3aff:fe4b:5d6e/64",
+            "192.0.2.10/24",
+            "00:1a:2b:3c:4d:5e",
+        ] {
             assert_eq!(hits(expected), [expected]);
         }
-        assert_eq!(hits("12:34:56"), ["12:34:56"], "时间不能被当成 IPv6 或三个数字");
+        assert_eq!(
+            hits("12:34:56"),
+            ["12:34:56"],
+            "时间不能被当成 IPv6 或三个数字"
+        );
         assert_eq!(hits("2026-09-28T21:41:47.123"), ["2026-09-28T21:41:47.123"]);
         assert_eq!(hits("login failed: 连接超时"), ["failed", "超时"]);
         assert!(hits("std::io::Result Vec::new password information May I").is_empty());
-        assert!(hits("ls -la --color=auto a-b").is_empty(), "默认规则不单独高亮命令行选项");
-        assert_eq!(hits(r#"say "quoted 42" 50% 10.5GB 30s 1st v2 3f2b"#), [r#""quoted 42""#, "50%", "10.5GB", "30s"]);
+        assert!(
+            hits("ls -la --color=auto a-b").is_empty(),
+            "默认规则不单独高亮命令行选项"
+        );
+        assert_eq!(
+            hits(r#"say "quoted 42" 50% 10.5GB 30s 1st v2 3f2b"#),
+            [r#""quoted 42""#, "50%", "10.5GB", "30s"]
+        );
     }
 
     #[test]
@@ -250,15 +302,44 @@ mod tests {
         let rules = crate::config::Config::default().highlight_rules;
         let highlights = compile(&rules, true);
         let expected = [
-            ("d", 5), ("r", 4), ("w", 3), ("x", 1), ("r", 4), ("-", 10), ("s", 1), ("r", 4), ("-", 10), ("x", 1),
-            ("4", 4), ("4096", 4), ("Mar  4", 10), ("2026", 4),
+            ("d", 5),
+            ("r", 4),
+            ("w", 3),
+            ("x", 1),
+            ("r", 4),
+            ("-", 10),
+            ("s", 1),
+            ("r", 4),
+            ("-", 10),
+            ("x", 1),
+            ("4", 4),
+            ("4096", 4),
+            ("Mar  4", 10),
+            ("2026", 4),
         ];
-        let expected: Vec<(String, u8)> = expected.iter().map(|(text, color)| (text.to_string(), *color)).collect();
-        assert_eq!(segments("drwxr-sr-x  4 root root 4096 Mar  4  2026 yangminguhi/", &highlights), expected);
+        let expected: Vec<(String, u8)> = expected
+            .iter()
+            .map(|(text, color)| (text.to_string(), *color))
+            .collect();
+        assert_eq!(
+            segments(
+                "drwxr-sr-x  4 root root 4096 Mar  4  2026 yangminguhi/",
+                &highlights
+            ),
+            expected
+        );
 
         // 普通文件的类型位 '-' 是黄绿；ACL 标记 '.' 不改色；紧挨别的字符的 rwx 不算权限串
         let file = segments("-rw-r--r--. 1 x-rwxrwxrwx", &highlights);
-        assert_eq!(file[..4], [("-".to_string(), 10), ("r".to_string(), 4), ("w".to_string(), 3), ("-".to_string(), 10)]);
+        assert_eq!(
+            file[..4],
+            [
+                ("-".to_string(), 10),
+                ("r".to_string(), 4),
+                ("w".to_string(), 3),
+                ("-".to_string(), 10)
+            ]
+        );
         assert_eq!(file.last(), Some(&("1".to_string(), 4)));
 
         // 关闭权限串着色后，只剩普通数字规则命中数字，不再套命令行选项颜色

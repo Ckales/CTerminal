@@ -14,14 +14,35 @@ fn run(command: &str) -> (Arc<Session>, String) {
     let sink = Arc::new(move |event: SessionEvent| {
         let _ = event_tx.send(event);
     });
-    let size = WinSize { cols: 40, rows: 5, cell_width: 8, cell_height: 16 };
-    let options = TermOptions { scrollback: 100, cursor: "block".into(), word_separators: " ".into(), scroll_on_input: true, palette: Palette::default(), highlights: Vec::new(), bold_is_bright: true, history: None };
+    let size = WinSize {
+        cols: 40,
+        rows: 5,
+        cell_width: 8,
+        cell_height: 16,
+    };
+    let options = TermOptions {
+        scrollback: 100,
+        cursor: "block".into(),
+        word_separators: " ".into(),
+        scroll_on_input: true,
+        palette: Palette::default(),
+        highlights: Vec::new(),
+        bold_is_bright: true,
+        history: None,
+    };
     let (session, tx) = Session::new(options, size, sink);
-    let local = LocalOptions { command: "/bin/sh".into(), args: vec!["-c".into(), command.into()], ..Default::default() };
+    let local = LocalOptions {
+        command: "/bin/sh".into(),
+        args: vec!["-c".into(), command.into()],
+        ..Default::default()
+    };
     let transport = local::spawn(&local, size, tx).expect("spawn");
     session.attach(Box::new(transport));
     loop {
-        match event_rx.recv_timeout(Duration::from_secs(5)).expect("session should exit") {
+        match event_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("session should exit")
+        {
             SessionEvent::Exit(reason) => return (session, reason),
             _ => continue,
         }
@@ -55,7 +76,10 @@ fn scrollback_selection_and_search() {
     assert!(frame.history_size > 0);
     assert!(session.search("line2", true).unwrap());
     let frame = session.frame();
-    assert!(frame.display_offset > 0, "search should scroll to the match");
+    assert!(
+        frame.display_offset > 0,
+        "search should scroll to the match"
+    );
     session.select_all();
     let text = session.selection_text().unwrap();
     assert!(text.contains("line1") && text.contains("line9"));
@@ -67,10 +91,29 @@ fn cwd_of_running_shell() {
     let sink = Arc::new(move |event: SessionEvent| {
         let _ = event_tx.send(event);
     });
-    let size = WinSize { cols: 40, rows: 5, cell_width: 8, cell_height: 16 };
-    let options = TermOptions { scrollback: 100, cursor: "block".into(), word_separators: " ".into(), scroll_on_input: true, palette: Palette::default(), highlights: Vec::new(), bold_is_bright: true, history: None };
+    let size = WinSize {
+        cols: 40,
+        rows: 5,
+        cell_width: 8,
+        cell_height: 16,
+    };
+    let options = TermOptions {
+        scrollback: 100,
+        cursor: "block".into(),
+        word_separators: " ".into(),
+        scroll_on_input: true,
+        palette: Palette::default(),
+        highlights: Vec::new(),
+        bold_is_bright: true,
+        history: None,
+    };
     let (session, tx) = Session::new(options, size, sink);
-    let local = LocalOptions { command: "/bin/sleep".into(), args: vec!["2".into()], cwd: "/tmp".into(), ..Default::default() };
+    let local = LocalOptions {
+        command: "/bin/sleep".into(),
+        args: vec!["2".into()],
+        cwd: "/tmp".into(),
+        ..Default::default()
+    };
     session.attach(Box::new(local::spawn(&local, size, tx).unwrap()));
     let cwd = session.cwd().unwrap();
     assert!(cwd.ends_with("/tmp"), "{cwd}");

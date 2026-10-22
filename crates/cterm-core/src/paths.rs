@@ -4,7 +4,9 @@ use std::path::{Path, PathBuf};
 
 pub fn home_dir() -> PathBuf {
     let var = if cfg!(windows) { "USERPROFILE" } else { "HOME" };
-    std::env::var_os(var).map(PathBuf::from).unwrap_or_else(|| PathBuf::from("/"))
+    std::env::var_os(var)
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("/"))
 }
 
 /// macOS: ~/Library/Application Support/CTerminal；Windows: %APPDATA%\CTerminal。
@@ -14,13 +16,17 @@ pub fn config_dir() -> PathBuf {
         return PathBuf::from(dir);
     }
     if cfg!(windows) {
-        let appdata = std::env::var_os("APPDATA").map(PathBuf::from).unwrap_or_else(home_dir);
+        let appdata = std::env::var_os("APPDATA")
+            .map(PathBuf::from)
+            .unwrap_or_else(home_dir);
         return appdata.join("CTerminal");
     }
     if cfg!(target_os = "macos") {
         return home_dir().join("Library/Application Support/CTerminal");
     }
-    let base = std::env::var_os("XDG_CONFIG_HOME").map(PathBuf::from).unwrap_or_else(|| home_dir().join(".config"));
+    let base = std::env::var_os("XDG_CONFIG_HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| home_dir().join(".config"));
     base.join("cterminal")
 }
 
@@ -88,7 +94,9 @@ pub fn to_shell(host: &str, style: PathStyle) -> String {
 pub fn quote_for_shell(path: &str, style: PathStyle) -> String {
     // cmd / PowerShell 里反斜杠是路径分隔符；POSIX shell 里是转义符，文件名带它必须加引号
     let windows_native = cfg!(windows) && style == PathStyle::Native;
-    let needs_quote = path.chars().any(|c| c.is_whitespace() || "'\"()&;|<>$`!*?[]{}#~".contains(c) || (c == '\\' && !windows_native));
+    let needs_quote = path.chars().any(|c| {
+        c.is_whitespace() || "'\"()&;|<>$`!*?[]{}#~".contains(c) || (c == '\\' && !windows_native)
+    });
     if !needs_quote {
         return path.to_string();
     }
@@ -108,14 +116,20 @@ mod tests {
         assert_eq!(to_shell(host, PathStyle::Native), host);
         assert_eq!(to_shell(host, PathStyle::Msys), "/c/Users/me/My Files");
         assert_eq!(to_shell(host, PathStyle::Wsl), "/mnt/c/Users/me/My Files");
-        assert_eq!(to_shell(host, PathStyle::Cygwin), "/cygdrive/c/Users/me/My Files");
+        assert_eq!(
+            to_shell(host, PathStyle::Cygwin),
+            "/cygdrive/c/Users/me/My Files"
+        );
         assert_eq!(to_shell("/Users/me", PathStyle::Wsl), "/Users/me");
     }
 
     #[test]
     fn quoting() {
         assert_eq!(quote_for_shell("/tmp/a", PathStyle::Msys), "/tmp/a");
-        assert_eq!(quote_for_shell("/tmp/it's here", PathStyle::Msys), r"'/tmp/it'\''s here'");
+        assert_eq!(
+            quote_for_shell("/tmp/it's here", PathStyle::Msys),
+            r"'/tmp/it'\''s here'"
+        );
     }
 
     #[test]
@@ -145,7 +159,13 @@ mod tests {
     #[test]
     fn backslash_in_posix_file_name_is_quoted() {
         assert_eq!(quote_for_shell(r"/tmp/a\b", PathStyle::Msys), r"'/tmp/a\b'");
-        assert_eq!(quote_for_shell("/tmp/$HOME", PathStyle::Wsl), "'/tmp/$HOME'");
-        assert_eq!(quote_for_shell("/tmp/plain-name_1.txt", PathStyle::Wsl), "/tmp/plain-name_1.txt");
+        assert_eq!(
+            quote_for_shell("/tmp/$HOME", PathStyle::Wsl),
+            "'/tmp/$HOME'"
+        );
+        assert_eq!(
+            quote_for_shell("/tmp/plain-name_1.txt", PathStyle::Wsl),
+            "/tmp/plain-name_1.txt"
+        );
     }
 }

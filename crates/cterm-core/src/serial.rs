@@ -34,7 +34,11 @@ pub fn open(options: &SerialOptions, tx: Sender<Output>) -> io::Result<SerialTra
         7 => DataBits::Seven,
         _ => DataBits::Eight,
     };
-    let stop_bits = if options.stopbits == 2 { StopBits::Two } else { StopBits::One };
+    let stop_bits = if options.stopbits == 2 {
+        StopBits::Two
+    } else {
+        StopBits::One
+    };
     let parity = match options.parity.as_str() {
         "odd" => Parity::Odd,
         "even" => Parity::Even,
@@ -59,28 +63,40 @@ pub fn open(options: &SerialOptions, tx: Sender<Output>) -> io::Result<SerialTra
     let closed = Arc::new(AtomicBool::new(false));
     let reader_closed = closed.clone();
     let port_name = options.port.clone();
-    thread::Builder::new().name("cterm-serial".into()).spawn(move || {
-        let mut buffer = vec![0u8; 4096];
-        let reason = loop {
-            match reader.read(&mut buffer) {
-                Ok(0) => continue,
-                Ok(count) => {
-                    if reader_tx.send(Output::Data(buffer[..count].to_vec())).is_err() {
-                        return;
+    thread::Builder::new()
+        .name("cterm-serial".into())
+        .spawn(move || {
+            let mut buffer = vec![0u8; 4096];
+            let reason = loop {
+                match reader.read(&mut buffer) {
+                    Ok(0) => continue,
+                    Ok(count) => {
+                        if reader_tx
+                            .send(Output::Data(buffer[..count].to_vec()))
+                            .is_err()
+                        {
+                            return;
+                        }
                     }
-                }
-                Err(err) if err.kind() == io::ErrorKind::TimedOut => {
-                    // 读线程持有克隆的句柄，只能靠标志位退出，端口才会真正释放
-                    if reader_closed.load(Ordering::Acquire) {
-                        break String::new();
+                    Err(err) if err.kind() == io::ErrorKind::TimedOut => {
+                        // 读线程持有克隆的句柄，只能靠标志位退出，端口才会真正释放
+                        if reader_closed.load(Ordering::Acquire) {
+                            break String::new();
+                        }
                     }
+                    Err(err) => break trf!("串口已断开：{err}", err = err),
                 }
-                Err(err) => break trf!("串口已断开：{err}", err = err),
-            }
-        };
-        crate::log::info(&format!("串口 {port_name} 会话结束：{}", if reason.is_empty() { "正常关闭" } else { &reason }));
-        let _ = reader_tx.send(Output::Closed(reason));
-    })?;
+            };
+            crate::log::info(&format!(
+                "串口 {port_name} 会话结束：{}",
+                if reason.is_empty() {
+                    "正常关闭"
+                } else {
+                    &reason
+                }
+            ));
+            let _ = reader_tx.send(Output::Closed(reason));
+        })?;
 
     let newline = match options.output_newlines.as_str() {
         "lf" => b"\n".to_vec(),
@@ -88,7 +104,12 @@ pub fn open(options: &SerialOptions, tx: Sender<Output>) -> io::Result<SerialTra
         _ => b"\r".to_vec(),
     };
     let local_echo = if options.local_echo { Some(tx) } else { None };
-    Ok(SerialTransport { port, newline, local_echo, closed })
+    Ok(SerialTransport {
+        port,
+        newline,
+        local_echo,
+        closed,
+    })
 }
 
 pub fn convert_newlines(data: &[u8], newline: &[u8]) -> Vec<u8> {
