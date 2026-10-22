@@ -22,6 +22,8 @@ String tr(String source, [Map<String, Object?> args = const {}]) {
 }
 
 const _english = <String, String>{
+  '低风险命令自动执行，危险或未知命令仍需确认': 'Run low-risk commands automatically; dangerous or unknown commands require approval',
+  '每条命令执行前询问': 'Ask before running each command',
   '执行失败': 'Execution failed',
   '执行超时，命令可能仍在运行': 'Execution timed out; the command may still be running',
   '终端已断开，执行结果未知': 'Terminal disconnected; execution outcome is unknown',
@@ -280,8 +282,7 @@ const _english = <String, String>{
   'ls -l 里的 drwxr-xr-x：类型、r、w、x、- 各用一种颜色，优先于下面的规则': 'drwxr-xr-x in ls -l: file type, r, w, x and - each get their own color, ahead of the rules below',
   '恢复默认规则？': 'Restore default rules?',
   '当前的高亮规则会被替换为默认规则，自己添加或修改过的规则会丢失。': 'Current highlight rules will be replaced by the defaults. Rules you added or edited will be lost.',
-  '按正则给程序没有上色的文字换颜色，颜色取自当前配色方案。靠前的规则优先；vim 等全屏程序里不生效。':
-      'Recolors text the program left uncolored, matched by regex. Colors come from the current color scheme. Earlier rules win; not applied in full-screen apps such as vim.',
+  '按正则给程序没有上色的文字换颜色，颜色取自当前配色方案。靠前的规则优先；vim 等全屏程序里不生效。': 'Recolors text the program left uncolored, matched by regex. Colors come from the current color scheme. Earlier rules win; not applied in full-screen apps such as vim.',
   '不改': 'Unchanged',
   '忽略大小写': 'Ignore case',
   '粗体': 'Bold',
@@ -378,8 +379,7 @@ const _english = <String, String>{
   '转发 ssh-agent': 'Forward ssh-agent',
   '只对信任的服务器开启': 'Only enable for servers you trust',
   '端口转发': 'Port forwarding',
-  '本地：把本机端口转发到远端可访问的地址；远程：把服务器端口转发回本机；动态：本机 SOCKS5 代理':
-      'Local: forward a local port to an address reachable from the server. Remote: forward a server port back here. Dynamic: local SOCKS5 proxy',
+  '本地：把本机端口转发到远端可访问的地址；远程：把服务器端口转发回本机；动态：本机 SOCKS5 代理': 'Local: forward a local port to an address reachable from the server. Remote: forward a server port back here. Dynamic: local SOCKS5 proxy',
   '添加私钥': 'Add private key',
   '添加转发': 'Add forward',
   '登录脚本': 'Login scripts',
@@ -488,15 +488,12 @@ const _english = <String, String>{
   '恢复': 'Reset',
   '恢复默认设置': 'Reset settings',
   '版本 {version}': 'Version {version}',
-  '跨平台桌面终端。Flutter 绘制界面，Rust 负责终端内核与连接。':
-      'A cross-platform desktop terminal. Flutter draws the UI; Rust runs the terminal core and connections.',
+  '跨平台桌面终端。Flutter 绘制界面，Rust 负责终端内核与连接。': 'A cross-platform desktop terminal. Flutter draws the UI; Rust runs the terminal core and connections.',
   '开源许可：MIT': 'License: MIT',
-  '终端内核 alacritty_terminal · SSH russh · PTY portable-pty · 串口 serialport · 钥匙串 keyring':
-      'Terminal core alacritty_terminal · SSH russh · PTY portable-pty · serial serialport · keychain keyring',
+  '终端内核 alacritty_terminal · SSH russh · PTY portable-pty · 串口 serialport · 钥匙串 keyring': 'Terminal core alacritty_terminal · SSH russh · PTY portable-pty · serial serialport · keychain keyring',
   'macOS 钥匙串（钥匙串访问 → 登录 → 搜索 “CTerminal”）': 'the macOS keychain (Keychain Access → login → search "CTerminal")',
   'Windows 凭据管理器（Windows 凭据 → “CTerminal”）': 'Windows Credential Manager (Windows Credentials → "CTerminal")',
-  'SSH 密码和私钥口令只保存在{store}。\n配置文件、日志、标签页恢复数据里都不会出现明文密码；界面层也读不到已保存的密码，只能覆盖或删除。':
-      'SSH passwords and key passphrases are stored only in {store}.\nThey never appear in the config file, logs or restored tab data, and the interface cannot read them back — only overwrite or delete them.',
+  'SSH 密码和私钥口令只保存在{store}。\n配置文件、日志、标签页恢复数据里都不会出现明文密码；界面层也读不到已保存的密码，只能覆盖或删除。': 'SSH passwords and key passphrases are stored only in {store}.\nThey never appear in the config file, logs or restored tab data, and the interface cannot read them back — only overwrite or delete them.',
   '已保存密码': 'Password saved',
   '未保存密码': 'No password saved',
   '还没有 SSH 配置': 'No SSH profiles yet',

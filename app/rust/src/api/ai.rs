@@ -170,6 +170,11 @@ pub fn ai_tool_execute(
 }
 
 #[frb(sync)]
+pub fn ai_tool_can_auto_execute(command: String) -> bool {
+    cterm_core::ai::command_can_auto_execute(&command)
+}
+
+#[frb(sync)]
 pub fn ai_tool_cancel(terminal_id: u32, call_id: String) {
     if let Some(session) = crate::api::terminal::session_by_id(terminal_id) {
         session.ai_cancel(&call_id);

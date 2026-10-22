@@ -51,7 +51,14 @@ class _FakeApi extends Fake implements RustLibApi {
   String crateApiSettingsColorSchemes() => '[]';
 
   @override
+  Future<void> crateApiSettingsStateSave({required String json}) async {}
+
+  @override
   bool crateApiAiAiStatus() => hasApiKey;
+
+  @override
+  bool crateApiAiAiToolCanAutoExecute({required String command}) =>
+      command == 'pwd';
 
   @override
   Future<void> crateApiAiAiSetApiKey({required String value}) async {
@@ -191,7 +198,11 @@ TerminalSession _session(String id) => TerminalSession(
   },
 );
 
-void _emitToolCall(StreamController<ai.AiChatEvent> events) {
+void _emitToolCall(
+  StreamController<ai.AiChatEvent> events, {
+  String command = 'pwd',
+  bool done = true,
+}) {
   events.add(
     ai.AiChatEvent(
       kind: 'tool_calls',
@@ -205,7 +216,7 @@ void _emitToolCall(StreamController<ai.AiChatEvent> events) {
             'function': {
               'name': 'execute_terminal_command',
               'arguments': jsonEncode({
-                'command': 'pwd',
+                'command': command,
                 'description': '查看当前目录',
               }),
             },
@@ -214,7 +225,7 @@ void _emitToolCall(StreamController<ai.AiChatEvent> events) {
       }),
     ),
   );
-  events.add(const ai.AiChatEvent(kind: 'done', text: ''));
+  if (done) events.add(const ai.AiChatEvent(kind: 'done', text: ''));
 }
 
 void main() {
@@ -519,7 +530,14 @@ void main() {
     expect(find.text('确认执行'), findsOneWidget);
     expect(find.text('拒绝执行'), findsOneWidget);
     expect(api.toolExecutions, isEmpty);
-    final clearButton = tester.widget<IconButton>(find.ancestor(of: find.byTooltip('清空对话'), matching: find.byType(IconButton)).first);
+    final clearButton = tester.widget<IconButton>(
+      find
+          .ancestor(
+            of: find.byTooltip('清空对话'),
+            matching: find.byType(IconButton),
+          )
+          .first,
+    );
     expect(clearButton.onPressed, isNull);
     await tester.tap(find.byTooltip('清空对话'));
     await tester.pump();
@@ -535,7 +553,16 @@ void main() {
     ]);
     expect(find.text('正在执行命令…'), findsOneWidget);
     expect(
-      tester.widget<IconButton>(find.ancestor(of: find.byTooltip('清空对话'), matching: find.byType(IconButton)).first).onPressed,
+      tester
+          .widget<IconButton>(
+            find
+                .ancestor(
+                  of: find.byTooltip('清空对话'),
+                  matching: find.byType(IconButton),
+                )
+                .first,
+          )
+          .onPressed,
       isNull,
     );
     await tester.tap(find.byTooltip('清空对话'));
@@ -570,6 +597,126 @@ void main() {
       'exitCode': 0,
       'status': 'completed',
     });
+    app.dispose();
+  });
+
+  testWidgets('auto 自动执行低风险命令并继续对话，危险命令仍确认', (tester) async {
+    final session = _session('first');
+    final app = await mountWorkspace(
+      tester,
+      sessions: [session],
+      startSessions: true,
+    );
+    await tester.tap(find.byKey(const ValueKey('ai-mode-auto')));
+    await tester.enterText(
+      find.byKey(const ValueKey('ai-input')),
+      'inspect directory',
+    );
+    await tester.pump();
+    await tester.tap(find.byTooltip('发送'));
+    await tester.pump();
+    _emitToolCall(api.agentChats.single.events);
+    await tester.pump(const Duration(milliseconds: 50));
+    expect(api.toolExecutions.single.command, 'pwd');
+    expect(api.agentChats, hasLength(2));
+    expect(find.text('确认执行'), findsNothing);
+    _emitToolCall(api.agentChats.last.events, command: 'rm -rf example');
+    await tester.pump(const Duration(milliseconds: 50));
+    expect(api.toolExecutions, hasLength(1));
+    expect(find.text('确认执行'), findsOneWidget);
+    await tester.ensureVisible(find.text('拒绝执行'));
+    await tester.pump();
+    await tester.tap(find.text('拒绝执行'));
+    await tester.pump(const Duration(milliseconds: 50));
+    expect(api.toolExecutions, hasLength(1));
+    app.dispose();
+  });
+
+  testWidgets('auto 收到工具调用后停止生成不会执行，迟到 done 也忽略', (tester) async {
+    final session = _session('first');
+    final app = await mountWorkspace(
+      tester,
+      sessions: [session],
+      startSessions: true,
+    );
+    await tester.tap(find.byKey(const ValueKey('ai-mode-auto')));
+    await tester.enterText(
+      find.byKey(const ValueKey('ai-input')),
+      'inspect directory',
+    );
+    await tester.pump();
+    await tester.tap(find.byTooltip('发送'));
+    await tester.pump();
+    final request = api.agentChats.single;
+    _emitToolCall(request.events, done: false);
+    await tester.pump(const Duration(milliseconds: 50));
+    await tester.tap(find.byTooltip('停止生成'));
+    await tester.pump();
+    request.events.add(const ai.AiChatEvent(kind: 'done', text: ''));
+    await tester.pump(const Duration(milliseconds: 50));
+    expect(api.toolExecutions, isEmpty);
+    expect(api.agentChats, hasLength(1));
+    app.dispose();
+  });
+
+  testWidgets('auto 保留于原会话，切换标签和重开面板不改变模式', (tester) async {
+    final first = _session('first');
+    final second = _session('second');
+    final app = await mountWorkspace(
+      tester,
+      sessions: [first, second],
+    );
+    bool autoSelected() =>
+        tester
+            .widget<Semantics>(
+              find
+                  .descendant(
+                    of: find.byKey(const ValueKey('ai-mode-auto')),
+                    matching: find.byType(Semantics),
+                  )
+                  .last,
+            )
+            .properties
+            .selected ==
+        true;
+    await tester.tap(find.byKey(const ValueKey('ai-mode-auto')));
+    await tester.pump();
+    expect(autoSelected(), isTrue);
+    app.selectTab(1);
+    await tester.pumpAndSettle();
+    expect(autoSelected(), isFalse);
+    app.selectTab(0);
+    await tester.pumpAndSettle();
+    expect(autoSelected(), isTrue);
+    app.toggleAi();
+    await tester.pumpAndSettle();
+    app.toggleAi();
+    await tester.pumpAndSettle();
+    expect(autoSelected(), isTrue);
+    app.dispose();
+  });
+
+  testWidgets('auto 切回 ask 后低风险命令也等待确认', (tester) async {
+    final session = _session('first');
+    final app = await mountWorkspace(
+      tester,
+      sessions: [session],
+      startSessions: true,
+    );
+    await tester.tap(find.byKey(const ValueKey('ai-mode-auto')));
+    await tester.pump();
+    await tester.tap(find.byKey(const ValueKey('ai-mode-ask')));
+    await tester.enterText(
+      find.byKey(const ValueKey('ai-input')),
+      'inspect directory',
+    );
+    await tester.pump();
+    await tester.tap(find.byTooltip('发送'));
+    await tester.pump();
+    _emitToolCall(api.agentChats.single.events);
+    await tester.pump(const Duration(milliseconds: 50));
+    expect(api.toolExecutions, isEmpty);
+    expect(find.text('确认执行'), findsOneWidget);
     app.dispose();
   });
 

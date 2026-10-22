@@ -65,6 +65,9 @@ Future<String> aiToolExecute({
   command: command,
 );
 
+bool aiToolCanAutoExecute({required String command}) =>
+    RustLib.instance.api.crateApiAiAiToolCanAutoExecute(command: command);
+
 void aiToolCancel({required int terminalId, required String callId}) => RustLib
     .instance
     .api

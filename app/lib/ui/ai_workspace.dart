@@ -33,6 +33,7 @@ class _Conversation {
   String? executingCallId;
   String requestContext = '';
   String requestPreset = '';
+  bool autoExecute = false;
 }
 
 /// The dock owns conversations so changing its position or hiding it keeps drafts.
@@ -48,6 +49,7 @@ class _AiWorkspaceState extends State<AiWorkspace> {
   final _conversations = <TerminalSession?, _Conversation>{};
   final _contentKey = GlobalKey();
   final _panelKey = GlobalKey();
+  final _dockSize = ValueNotifier<Offset>(const Offset(380, 310));
   double _rightWidth = 380;
   double _bottomHeight = 310;
 
@@ -81,6 +83,15 @@ class _AiWorkspaceState extends State<AiWorkspace> {
       }
     });
     if (subscription != null) unawaited(subscription.cancel());
+    if (kind == 'done' && chat.toolCall != null && chat.autoExecute) {
+      final call = (chat.toolCall!['tool_calls'] as List).single as Map;
+      final args =
+          jsonDecode((call['function'] as Map)['arguments'] as String) as Map;
+      // The core policy must explicitly allow this exact command. Unknowns stay ask.
+      if (ai.aiToolCanAutoExecute(command: args['command'] as String)) {
+        unawaited(_resolveTool(chat, true));
+      }
+    }
   }
 
   void _stop(_Conversation chat) {
@@ -243,6 +254,7 @@ class _AiWorkspaceState extends State<AiWorkspace> {
     _conversations[session] = _Conversation()
       ..draft = old.draft
       ..presetId = old.presetId
+      ..autoExecute = old.autoExecute
       ..status = tr('终端已重启，请发送新消息开始对话');
   }
 
@@ -317,6 +329,7 @@ class _AiWorkspaceState extends State<AiWorkspace> {
   @override
   void dispose() {
     _renderTimer?.cancel();
+    _dockSize.dispose();
     for (final chat in _conversations.values) {
       final id = chat.requestId;
       if (id != null) ai.aiChatCancel(requestId: id);
@@ -373,13 +386,8 @@ class _AiWorkspaceState extends State<AiWorkspace> {
     final right = (app.config['ai'] as Map?)?['panelPosition'] != 'bottom';
     return LayoutBuilder(
       builder: (context, constraints) {
-        final width = _rightWidth.clamp(
-          280.0,
-          (constraints.maxWidth * .65).clamp(280.0, 600.0),
-        );
         final maxHeight = math.min(650.0, constraints.maxHeight * .75);
         final minHeight = math.min(240.0, maxHeight);
-        final height = _bottomHeight.clamp(minHeight, maxHeight);
         // On a narrow window the bottom dock leaves the terminal usable.
         final vertical = !right || constraints.maxWidth < 650;
         final panel = _AiPanel(
@@ -393,48 +401,78 @@ class _AiWorkspaceState extends State<AiWorkspace> {
           onStop: () => _stop(chat),
           onToolDecision: (approve) => _resolveTool(chat, approve),
         );
-        final divider = MouseRegion(
-          cursor: vertical
-              ? SystemMouseCursors.resizeUpDown
-              : SystemMouseCursors.resizeLeftRight,
-          child: GestureDetector(
-            behavior: HitTestBehavior.opaque,
-            onPanUpdate: (event) => setState(() {
-              if (vertical) {
-                _bottomHeight = (height - event.delta.dy).clamp(
-                  minHeight,
-                  maxHeight,
-                );
-              } else {
-                _rightWidth = (width - event.delta.dx).clamp(
-                  280.0,
-                  constraints.maxWidth * .65,
-                );
-              }
-            }),
-            child: Container(
-              width: vertical ? null : 4,
-              height: vertical ? 4 : null,
-              color: AppTheme.of(context).border,
-            ),
-          ),
-        );
-        if (vertical) {
-          return Column(
-            children: [
-              Expanded(child: content),
-              divider,
-              SizedBox(height: height, child: panel),
-            ],
-          );
-        }
-        return Row(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Expanded(child: content),
-            divider,
-            SizedBox(width: width, child: panel),
-          ],
+        return ValueListenableBuilder<Offset>(
+          valueListenable: _dockSize,
+          child: panel,
+          builder: (context, size, panelChild) {
+            final width = size.dx.clamp(
+              280.0,
+              (constraints.maxWidth * .65).clamp(280.0, 600.0),
+            );
+            final height = size.dy.clamp(minHeight, maxHeight);
+            final divider = MouseRegion(
+              cursor: vertical
+                  ? SystemMouseCursors.resizeUpDown
+                  : SystemMouseCursors.resizeLeftRight,
+              child: GestureDetector(
+                key: const ValueKey('ai-dock-resize-handle'),
+                behavior: HitTestBehavior.opaque,
+                onPanUpdate: (event) {
+                  if (vertical) {
+                    _bottomHeight =
+                        (_dockSize.value.dy.clamp(minHeight, maxHeight) -
+                                event.delta.dy)
+                            .clamp(minHeight, maxHeight);
+                  } else {
+                    _rightWidth =
+                        (_dockSize.value.dx.clamp(
+                                  280.0,
+                                  (constraints.maxWidth * .65).clamp(
+                                    280.0,
+                                    600.0,
+                                  ),
+                                ) -
+                                event.delta.dx)
+                            .clamp(
+                              280.0,
+                              (constraints.maxWidth * .65).clamp(280.0, 600.0),
+                            );
+                  }
+                  _dockSize.value = Offset(_rightWidth, _bottomHeight);
+                },
+                child: Container(
+                  width: vertical ? null : 4,
+                  height: vertical ? 4 : null,
+                  color: AppTheme.of(context).border,
+                ),
+              ),
+            );
+            if (vertical) {
+              return Column(
+                children: [
+                  Expanded(child: content),
+                  divider,
+                  SizedBox(
+                    key: const ValueKey('ai-dock-panel'),
+                    height: height,
+                    child: panelChild,
+                  ),
+                ],
+              );
+            }
+            return Row(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Expanded(child: content),
+                divider,
+                SizedBox(
+                  key: const ValueKey('ai-dock-panel'),
+                  width: width,
+                  child: panelChild,
+                ),
+              ],
+            );
+          },
         );
       },
     );
@@ -949,6 +987,44 @@ class _AiPanelState extends State<_AiPanel> {
                       ],
                     ),
                   ),
+                ],
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+              child: Row(
+                children: [
+                  for (final auto in [false, true])
+                    Tooltip(
+                      message: auto
+                          ? tr('低风险命令自动执行，危险或未知命令仍需确认')
+                          : tr('每条命令执行前询问'),
+                      child: TextButton(
+                        key: ValueKey(auto ? 'ai-mode-auto' : 'ai-mode-ask'),
+                        style: TextButton.styleFrom(
+                          minimumSize: const Size(48, 28),
+                          padding: const EdgeInsets.symmetric(horizontal: 10),
+                          visualDensity: VisualDensity.compact,
+                          foregroundColor: chat.autoExecute == auto
+                              ? colors.accent
+                              : colors.textDim,
+                          backgroundColor: chat.autoExecute == auto
+                              ? colors.surfaceRaised
+                              : Colors.transparent,
+                        ),
+                        onPressed: () {
+                          chat.autoExecute = auto;
+                          widget.onChanged();
+                        },
+                        child: Semantics(
+                          selected: chat.autoExecute == auto,
+                          child: Text(
+                            auto ? 'auto' : 'ask',
+                            style: const TextStyle(fontSize: 11),
+                          ),
+                        ),
+                      ),
+                    ),
                 ],
               ),
             ),

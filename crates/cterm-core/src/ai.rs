@@ -26,6 +26,314 @@ const MAX_TOOL_FIELD_BYTES: usize = 256;
 const CANCEL_POLL_INTERVAL: Duration = Duration::from_millis(25);
 const PREPARED_CHAT_TTL: Duration = Duration::from_secs(15 * 60);
 
+/// Return whether a proposed shell command is simple enough for automatic execution.
+/// This is a syntax allowlist, not a sandbox: the interactive shell can still change command
+/// behavior through inherited aliases, functions, PATH, or other shell/environment state.
+/// Shell syntax and unknown commands/options fail closed.
+pub fn command_can_auto_execute(command: &str) -> bool {
+    if command.is_empty()
+        || command.len() > 4096
+        || !command.is_ascii()
+        || command.bytes().any(|byte| {
+            !(byte.is_ascii_alphanumeric()
+                || matches!(byte, b' ' | b'_' | b'.' | b'/' | b':' | b'@' | b'=' | b',' | b'+' | b'^' | b'~' | b'-'))
+        })
+    {
+        return false;
+    }
+
+    let words: Vec<&str> = command.split_whitespace().collect();
+    if words.is_empty() || words.len() > 128 {
+        return false;
+    }
+
+    match words[0] {
+        "pwd" => words.len() == 1 || (words.len() == 2 && matches!(words[1], "-L" | "-P")),
+        "ls" => safe_ls_args(&words[1..]),
+        "cat" => safe_cat_args(&words[1..]),
+        "head" | "tail" => safe_head_tail_args(&words[1..]),
+        "wc" => safe_wc_args(&words[1..]),
+        "uname" => words[1..].iter().all(|arg| matches!(*arg, "-a" | "-s" | "-n" | "-r" | "-v" | "-m" | "-p" | "-i" | "-o")),
+        "grep" => safe_grep_args(&words[1..]),
+        "git" => safe_git_args(&words[1..]),
+        _ => false,
+    }
+}
+
+fn safe_cat_args(args: &[&str]) -> bool {
+    let mut saw_path = false;
+    for arg in args {
+        if matches!(*arg, "-n" | "-b" | "-s" | "-E" | "-T" | "-v" | "-A" | "-e" | "-t" | "-En" | "-nE") {
+            continue;
+        }
+        if safe_path(arg) {
+            saw_path = true;
+        } else {
+            return false;
+        }
+    }
+    saw_path
+}
+
+fn safe_head_tail_args(args: &[&str]) -> bool {
+    let mut index = 0;
+    let mut saw_path = false;
+    while index < args.len() {
+        let arg = args[index];
+        if arg == "--" {
+            index += 1;
+            while index < args.len() {
+                if !safe_path(args[index]) {
+                    return false;
+                }
+                saw_path = true;
+                index += 1;
+            }
+            break;
+        }
+        if matches!(arg, "-q" | "-v") {
+            index += 1;
+            continue;
+        }
+        if matches!(arg, "-n" | "-c" | "--lines" | "--bytes") {
+            if index + 1 >= args.len() || !safe_count(args[index + 1]) {
+                return false;
+            }
+            index += 2;
+            continue;
+        }
+        if let Some(count) = arg.strip_prefix("-n").or_else(|| arg.strip_prefix("-c")) {
+            if !safe_count(count) {
+                return false;
+            }
+            index += 1;
+            continue;
+        }
+        if let Some(count) = arg.strip_prefix("--lines=").or_else(|| arg.strip_prefix("--bytes=")) {
+            if !safe_count(count) {
+                return false;
+            }
+            index += 1;
+            continue;
+        }
+        if safe_path(arg) {
+            saw_path = true;
+            index += 1;
+            continue;
+        }
+        return false;
+    }
+    saw_path
+}
+
+fn safe_wc_args(args: &[&str]) -> bool {
+    let mut saw_path = false;
+    let mut paths_started = false;
+    for arg in args {
+        if *arg == "--" {
+            if paths_started {
+                return false;
+            }
+            paths_started = true;
+        } else if !paths_started && matches!(*arg, "-l" | "-w" | "-c" | "-m" | "-L") {
+            continue;
+        } else if safe_path(arg) {
+            saw_path = true;
+        } else {
+            return false;
+        }
+    }
+    saw_path
+}
+
+fn safe_grep_args(args: &[&str]) -> bool {
+    let mut index = 0;
+    while index < args.len() && args[index].starts_with('-') && args[index] != "--" {
+        let option = args[index];
+        match option {
+            "-F" | "--fixed-strings" => {}
+            "-i" | "-n" | "-H" | "-h" | "-l" | "-L" | "-c" | "-w" | "-x"
+            | "--ignore-case" | "--line-number" | "--with-filename" | "--no-filename"
+            | "--count" | "--word-regexp" | "--line-regexp" => {}
+            _ if option.starts_with('-') && option.len() > 1 && option[1..].bytes().all(|byte| matches!(byte, b'i' | b'n' | b'H' | b'h' | b'l' | b'L' | b'c' | b'w' | b'x' | b'F')) => {}
+            _ => return false,
+        }
+        index += 1;
+    }
+    if index < args.len() && args[index] == "--" {
+        index += 1;
+    }
+    if index >= args.len() || !safe_grep_pattern(args[index]) {
+        return false;
+    }
+    index += 1;
+    index < args.len() && args[index..].iter().all(|path| safe_path(path))
+}
+
+fn safe_grep_pattern(pattern: &str) -> bool {
+    !pattern.is_empty()
+        && pattern.bytes().all(|byte| {
+            byte.is_ascii_alphanumeric()
+                || matches!(byte, b'_' | b'.' | b'/' | b':' | b'@' | b'=' | b',' | b'+' | b'^' | b'~' | b'-')
+        })
+}
+
+fn safe_count(value: &str) -> bool {
+    value
+        .parse::<u32>()
+        .is_ok_and(|count| (1..=10_000).contains(&count))
+}
+
+fn safe_ls_args(args: &[&str]) -> bool {
+    let mut paths_started = false;
+    for arg in args {
+        if *arg == "--" {
+            if paths_started {
+                return false;
+            }
+            paths_started = true;
+        } else if !paths_started && arg.starts_with('-') {
+            if !matches!(
+                *arg,
+                "-a" | "-A" | "-l" | "-h" | "-1" | "-d" | "-F" | "-la" | "-al" | "-lh" | "-hl" | "-lah" | "-alh"
+            ) {
+                return false;
+            }
+        } else if !safe_path(arg) {
+            return false;
+        }
+    }
+    true
+}
+
+fn safe_git_args(args: &[&str]) -> bool {
+    let (no_pager, args) = match args.split_first() {
+        Some((first, rest)) if *first == "--no-pager" => (true, rest),
+        Some(_) => (false, args),
+        None => return false,
+    };
+    let Some((subcommand, rest)) = args.split_first() else {
+        return false;
+    };
+    if !matches!(*subcommand, "status" | "diff" | "log" | "show") {
+        return false;
+    }
+
+    let mut paths_started = false;
+    let mut no_ext_diff = false;
+    let mut no_textconv = false;
+    for arg in rest {
+        if *arg == "--" {
+            if paths_started {
+                return false;
+            }
+            paths_started = true;
+            continue;
+        }
+        if paths_started {
+            if !safe_path(arg) {
+                return false;
+            }
+            continue;
+        }
+        if arg.starts_with('-') {
+            if !safe_git_option(subcommand, arg) {
+                return false;
+            }
+            no_ext_diff |= *arg == "--no-ext-diff";
+            no_textconv |= *arg == "--no-textconv";
+        } else if *subcommand == "status" {
+            // Git status pathspecs are accepted without `--` unless they look like options.
+            if !safe_path(arg) {
+                return false;
+            }
+        } else if !safe_revision_or_path(arg) {
+            return false;
+        }
+    }
+    no_pager
+        && match *subcommand {
+            "diff" | "show" => no_ext_diff && no_textconv,
+            "status" | "log" => true,
+            _ => false,
+        }
+}
+
+fn safe_git_option(subcommand: &str, option: &str) -> bool {
+    match subcommand {
+        "status" => matches!(
+            option,
+            "-s" | "--short" | "-b" | "--branch" | "--porcelain" | "--porcelain=v1" | "--porcelain=v2"
+                | "--untracked-files=no" | "--untracked-files=normal" | "--untracked-files=all"
+                | "--ignored=no" | "--no-renames"
+        ),
+        "diff" => matches!(
+            option,
+            "--stat" | "--shortstat" | "--numstat" | "--name-only" | "--name-status" | "--check"
+                | "--cached" | "--staged" | "--no-color" | "--color=never" | "--no-ext-diff"
+                | "--no-textconv" | "--ignore-space-change" | "--ignore-all-space" | "--word-diff=plain"
+                | "-U0" | "-U1" | "-U2" | "-U3" | "-U4" | "-U5"
+        ),
+        "log" => {
+            matches!(
+                option,
+                "--oneline" | "--decorate" | "--no-decorate" | "--graph" | "--no-color" | "--color=never"
+            ) || option
+                .strip_prefix("-")
+                .is_some_and(|count| count.parse::<u16>().is_ok_and(|value| (1..=100).contains(&value)))
+                || option.strip_prefix("-n").is_some_and(|count| {
+                    count.parse::<u16>().is_ok_and(|value| (1..=100).contains(&value))
+                })
+                || option.strip_prefix("--max-count=").is_some_and(|count| {
+                    count.parse::<u16>().is_ok_and(|value| (1..=100).contains(&value))
+                })
+        }
+        "show" => matches!(
+            option,
+            "--stat" | "--oneline" | "--no-patch" | "--no-color" | "--color=never" | "--no-ext-diff"
+                | "--no-textconv" | "--format=short" | "--format=medium" | "--format=full"
+                | "--format=fuller" | "--format=oneline"
+        ),
+        _ => false,
+    }
+}
+
+fn safe_revision_or_path(value: &str) -> bool {
+    if let Some((revision, path)) = value.split_once(':') {
+        return safe_revision(revision) && safe_path(path);
+    }
+    safe_revision(value) || safe_path(value)
+}
+
+fn safe_revision(value: &str) -> bool {
+    if value == "HEAD" || value == "@" {
+        return true;
+    }
+    if let Some((base, suffix)) = value.split_once('~').or_else(|| value.split_once('^')) {
+        return safe_revision(base)
+            && (suffix.is_empty() || suffix.parse::<u16>().is_ok_and(|number| number <= 100));
+    }
+    if (7..=40).contains(&value.len()) && value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return true;
+    }
+    value.split('/').all(|part| {
+        !part.is_empty()
+            && part != "."
+            && part != ".."
+            && part
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.'))
+    })
+}
+
+fn safe_path(value: &str) -> bool {
+    !value.is_empty()
+        && !value.starts_with('-')
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.' | b'/'))
+}
+
 static NEXT_CHAT_ID: AtomicU32 = AtomicU32::new(1);
 static PREPARED_CHATS: LazyLock<Mutex<HashMap<u32, PreparedChat>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
@@ -926,6 +1234,92 @@ mod tests {
 
     use super::*;
     use crate::config::AiPanelPosition;
+
+    #[test]
+    fn auto_execute_allows_only_simple_read_only_commands() {
+        for command in [
+            "pwd",
+            "pwd -P",
+            "ls",
+            "ls -la",
+            "ls -la src",
+            "cat README.md",
+            "head -n 20 src/main.rs",
+            "tail -c 1024 app.log",
+            "wc -l src/main.rs",
+            "uname -a",
+            "grep -n TODO src/main.rs",
+            "grep -F TODO src/main.rs",
+            "git --no-pager status",
+            "git --no-pager status --short",
+            "git --no-pager diff --no-ext-diff --no-textconv --stat",
+            "git --no-pager diff --no-ext-diff --no-textconv -- src/main.rs",
+            "git --no-pager log -5 --oneline",
+            "git --no-pager show --no-ext-diff --no-textconv HEAD",
+        ] {
+            assert!(command_can_auto_execute(command), "should allow: {command}");
+        }
+    }
+
+    #[test]
+    fn auto_execute_rejects_shell_composition_and_expansion() {
+        for command in [
+            "pwd; rm -rf /",
+            "pwd && touch marker",
+            "pwd || curl example.com",
+            "ls | sh",
+            "ls > output.txt",
+            "ls 2>&1",
+            "echo $(id)",
+            "echo `id`",
+            "$(touch marker)",
+            "pwd\nrm -rf /",
+            "git status # then rm -rf /",
+            "git status;git diff",
+            "git status",
+            "git --no-pager diff",
+            "git --no-pager show HEAD",
+        ] {
+            assert!(!command_can_auto_execute(command), "must reject: {command}");
+        }
+    }
+
+    #[test]
+    fn auto_execute_rejects_writes_execution_and_ambiguous_arguments() {
+        for command in [
+            "rm file",
+            "touch marker",
+            "git reset --hard",
+            "git clean -fd",
+            "git checkout -- file",
+            "git status --exec=sh",
+            "find . -exec rm -rf {} \\;",
+            "xargs sh",
+            "sh -c 'pwd'",
+            "python -c 'print(1)'",
+            "curl https://example.com",
+            "git -c core.pager=sh status",
+            "git diff --output=out",
+            "git log --ext-diff",
+            "git --no-pager diff --ext-diff --no-textconv",
+            "git --no-pager diff --no-ext-diff",
+            "git --no-pager show --no-ext-diff",
+            "git show --format=\"%x00\" HEAD",
+            "git status --unknown-option",
+            "ls --color=auto;echo unsafe",
+            "",
+            "   ",
+            "cat",
+            "cat -",
+            "head -n 0 file.txt",
+            "tail -f server.log",
+            "wc -",
+            "grep -e pattern file.txt",
+            "grep -r password .",
+        ] {
+            assert!(!command_can_auto_execute(command), "must reject: {command}");
+        }
+    }
 
     fn settings() -> AiSettings {
         AiSettings {
