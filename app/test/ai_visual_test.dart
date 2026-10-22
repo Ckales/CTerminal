@@ -3,11 +3,15 @@
 @TestOn('mac-os')
 library;
 
+import 'dart:async';
 import 'dart:io';
 import 'dart:ui' as ui;
 import 'dart:convert';
 
 import 'package:cterminal/app_state.dart';
+import 'package:cterminal/src/rust/api/ai.dart' as ai;
+import 'package:cterminal/src/rust/api/terminal.dart' as terminal;
+import 'package:cterminal/terminal/terminal_session.dart';
 import 'package:cterminal/src/rust/frb_generated.dart';
 import 'package:cterminal/theme.dart';
 import 'package:cterminal/ui/ai_workspace.dart';
@@ -27,6 +31,53 @@ class _FakeApi extends Fake implements RustLibApi {
 
   @override
   bool crateApiAiAiStatus() => false;
+
+  @override
+  int crateApiAiAiChatPrepare() => 100;
+
+  @override
+  void crateApiAiAiChatCancel({required int requestId}) {}
+
+  @override
+  Stream<terminal.TermEvent> crateApiTerminalTermOpen({
+    required int id,
+    required String profileJson,
+    required terminal.TermSize size,
+  }) => const Stream.empty();
+
+  @override
+  void crateApiTerminalTermClose({required int id}) {}
+
+  @override
+  Stream<ai.AiChatEvent> crateApiAiAiAgentStream({
+    required int requestId,
+    required String presetId,
+    required String messagesJson,
+    required String context,
+    required int terminalId,
+  }) async* {
+    yield ai.AiChatEvent(
+      kind: 'tool_calls',
+      text: jsonEncode({
+        'role': 'assistant',
+        'content': '',
+        'tool_calls': [
+          {
+            'id': 'preview',
+            'type': 'function',
+            'function': {
+              'name': 'execute_terminal_command',
+              'arguments': jsonEncode({
+                'description': '查看 Nginx 配置文件列表',
+                'command': 'ls -lah /etc/nginx/conf.d\nls -lah /etc/nginx/sites-enabled',
+              }),
+            },
+          },
+        ],
+      }),
+    );
+    yield const ai.AiChatEvent(kind: 'done', text: '');
+  }
 
   @override
   String crateApiAiAiPresetsDefaults() => jsonEncode([
@@ -163,5 +214,36 @@ void main() {
 
     await tester.pumpWidget(const SizedBox());
     app.dispose();
+
+    await tester.binding.setSurfaceSize(const Size(1200, 760));
+    final session = TerminalSession(
+      profile: {
+        'id': 'preview',
+        'name': '本地终端',
+        'type': 'local',
+        'options': <String, dynamic>{},
+      },
+    );
+    session.start(
+      const terminal.TermSize(cols: 80, rows: 24, cellWidth: 8, cellHeight: 16),
+    );
+    final approvalApp = AppState(config: _config(sample: true))
+      ..aiVisible = true;
+    approvalApp.tabs.add(TerminalTab(session));
+    await tester.pumpWidget(
+      _frame(approvalApp, AiWorkspace(child: _terminalExample())),
+    );
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byKey(const ValueKey('ai-input')),
+      '列出 Nginx 配置文件',
+    );
+    await tester.pump();
+    await tester.tap(find.byTooltip('发送'));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('ai-tool-approval')), findsOneWidget);
+    await _saveShot(tester, '06-ai-command-approval', dir);
+    await tester.pumpWidget(const SizedBox());
+    approvalApp.dispose();
   }, skip: !enabled);
 }

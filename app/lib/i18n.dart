@@ -22,6 +22,7 @@ String tr(String source, [Map<String, Object?> args = const {}]) {
 }
 
 const _english = <String, String>{
+  '待执行命令': 'Command to run',
   '低风险命令自动执行，危险或未知命令仍需确认': 'Run low-risk commands automatically; dangerous or unknown commands require approval',
   '每条命令执行前询问': 'Ask before running each command',
   '执行失败': 'Execution failed',

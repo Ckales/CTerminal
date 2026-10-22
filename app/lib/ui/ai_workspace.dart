@@ -1036,7 +1036,13 @@ class _AiPanelState extends State<_AiPanel> {
 
   Widget _approvalCard(_Conversation chat) {
     final colors = AppTheme.of(context);
+    final call = (chat.toolCall!['tool_calls'] as List).single as Map;
+    final args =
+        jsonDecode((call['function'] as Map)['arguments'] as String) as Map;
+    final command = args['command'] as String;
+    final description = args['description'] as String? ?? '';
     return Container(
+      key: const ValueKey('ai-tool-approval'),
       padding: const EdgeInsets.all(12),
       margin: const EdgeInsets.only(bottom: 12),
       decoration: BoxDecoration(
@@ -1056,6 +1062,40 @@ class _AiPanelState extends State<_AiPanel> {
             ),
           ),
           const SizedBox(height: 8),
+          if (description.isNotEmpty) ...[
+            Text(
+              description,
+              style: TextStyle(color: colors.text, fontSize: 12, height: 1.5),
+            ),
+            const SizedBox(height: 8),
+          ],
+          Text(
+            tr('待执行命令'),
+            style: TextStyle(color: colors.textDim, fontSize: 11),
+          ),
+          Container(
+            width: double.infinity,
+            margin: const EdgeInsets.symmetric(vertical: 8),
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: colors.chrome,
+              border: Border.all(color: colors.border),
+              borderRadius: BorderRadius.circular(6),
+            ),
+            constraints: const BoxConstraints(maxHeight: 180),
+            child: SingleChildScrollView(
+              // Show the exact tool argument, without Markdown parsing or truncation.
+              child: SelectableText(
+                command,
+                style: TextStyle(
+                  fontFamily: 'Menlo',
+                  fontSize: 12,
+                  color: colors.text,
+                  height: 1.5,
+                ),
+              ),
+            ),
+          ),
           Text(
             tr('请确认目标终端处于 shell 提示符。执行输出将发送给 AI 继续分析。'),
             style: TextStyle(color: colors.textDim, fontSize: 11, height: 1.5),

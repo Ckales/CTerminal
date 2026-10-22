@@ -600,6 +600,58 @@ void main() {
     app.dispose();
   });
 
+  testWidgets('确认卡内显示完整原始命令，批准后执行内容与预览一致', (tester) async {
+    final session = _session('first');
+    final app = await mountWorkspace(
+      tester,
+      sessions: [session],
+      startSessions: true,
+    );
+    final command = List.generate(
+      30,
+      (index) => "printf '%s\\n' 'line $index'",
+    ).join('\n');
+    await tester.enterText(
+      find.byKey(const ValueKey('ai-input')),
+      'inspect command',
+    );
+    await tester.pump();
+    await tester.tap(find.byTooltip('发送'));
+    await tester.pump();
+    _emitToolCall(api.agentChats.single.events, command: command);
+    await tester.pump(const Duration(milliseconds: 50));
+    final card = find.byKey(const ValueKey('ai-tool-approval'));
+    await tester.scrollUntilVisible(
+      card,
+      300,
+      scrollable: find
+          .descendant(
+            of: find.byType(ListView),
+            matching: find.byType(Scrollable),
+          )
+          .first,
+    );
+    await tester.pump();
+    expect(card, findsOneWidget);
+    expect(
+      find.descendant(of: card, matching: find.text('查看当前目录')),
+      findsOneWidget,
+    );
+    final preview = find.descendant(
+      of: card,
+      matching: find.byType(SelectableText),
+    );
+    expect(tester.widget<SelectableText>(preview).data, command);
+    expect(tester.widget<SelectableText>(preview).maxLines, isNull);
+    expect(api.toolExecutions, isEmpty);
+    await tester.ensureVisible(find.text('确认执行'));
+    await tester.pump();
+    await tester.tap(find.text('确认执行'));
+    await tester.pump(const Duration(milliseconds: 50));
+    expect(api.toolExecutions.single.command, command);
+    app.dispose();
+  });
+
   testWidgets('auto 自动执行低风险命令并继续对话，危险命令仍确认', (tester) async {
     final session = _session('first');
     final app = await mountWorkspace(
@@ -662,10 +714,7 @@ void main() {
   testWidgets('auto 保留于原会话，切换标签和重开面板不改变模式', (tester) async {
     final first = _session('first');
     final second = _session('second');
-    final app = await mountWorkspace(
-      tester,
-      sessions: [first, second],
-    );
+    final app = await mountWorkspace(tester, sessions: [first, second]);
     bool autoSelected() =>
         tester
             .widget<Semantics>(
