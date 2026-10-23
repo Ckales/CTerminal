@@ -168,6 +168,15 @@ bool FlagOf(const flutter::EncodableMap& map, const char* name) {
   return value != nullptr && *value;
 }
 
+// Dart 的 int 按大小编码成 int32 或 int64（颜色超出 int32 范围）
+uint32_t Uint32Of(const flutter::EncodableMap& map, const char* name) {
+  auto found = map.find(flutter::EncodableValue(name));
+  if (found == map.end()) return 0;
+  if (const int64_t* value = std::get_if<int64_t>(&found->second)) return static_cast<uint32_t>(*value);
+  if (const int32_t* value = std::get_if<int32_t>(&found->second)) return static_cast<uint32_t>(*value);
+  return 0;
+}
+
 }  // namespace
 
 void FlutterWindow::HandleWindowCall(const flutter::MethodCall<flutter::EncodableValue>& call,
@@ -187,6 +196,14 @@ void FlutterWindow::HandleWindowCall(const flutter::MethodCall<flutter::Encodabl
         if (FlagOf(*map, "meta")) modifiers |= MOD_WIN;
         RegisterHotKey(GetHandle(), kToggleHotkeyId, modifiers, vk);
       }
+    }
+    result->Success();
+    return;
+  }
+  if (call.method_name() == "setTitleBarTheme") {
+    const auto* map = std::get_if<flutter::EncodableMap>(call.arguments());
+    if (map != nullptr) {
+      SetTitleBarTheme(FlagOf(*map, "dark"), Uint32Of(*map, "background"), Uint32Of(*map, "text"));
     }
     result->Success();
     return;

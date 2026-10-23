@@ -177,9 +177,19 @@ class _CTerminalAppState extends State<CTerminalApp> with WidgetsBindingObserver
     return theme == 'light' ? AppColors.light : AppColors.dark;
   }
 
+  /// 系统标题栏不会跟着应用主题变，需要主动同步一次（Windows 生效）
+  bool? _titleBarDark;
+
+  void _syncTitleBar(AppColors colors) {
+    if (_titleBarDark == colors.isDark) return;
+    _titleBarDark = colors.isDark;
+    WindowControl.setTitleBarTheme(dark: colors.isDark, background: colors.chrome, text: colors.text);
+  }
+
   @override
   Widget build(BuildContext context) {
     final colors = _colors();
+    _syncTitleBar(colors);
     final zoom = ((app.appearance['zoom'] as num?) ?? 1).toDouble();
     return AppScope(
       state: app,

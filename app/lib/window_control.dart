@@ -7,8 +7,8 @@ import 'package:flutter/services.dart';
 import 'hotkeys.dart';
 
 /// 窗口操作。macOS 走原生通道（标题栏融合、关闭确认在 MainFlutterWindow.swift）；
-/// Windows 用系统标题栏，关闭确认走 AppLifecycleListener.onExitRequested，
-/// 全局快捷键与全屏由 windows/runner/flutter_window.cpp 处理。
+/// Windows 用系统标题栏（配色由 setTitleBarTheme 同步），关闭确认走
+/// AppLifecycleListener.onExitRequested，全局快捷键与全屏由 windows/runner/flutter_window.cpp 处理。
 abstract final class WindowControl {
   static const channel = MethodChannel('cterminal/window');
 
@@ -23,6 +23,12 @@ abstract final class WindowControl {
 
   static void startDrag() {
     if (_mac) _send('startDrag');
+  }
+
+  /// 系统标题栏跟随应用主题而不是系统主题；background / text 仅在 Windows 11 生效
+  static void setTitleBarTheme({required bool dark, required Color background, required Color text}) {
+    if (!Platform.isWindows) return;
+    _send('setTitleBarTheme', {'dark': dark, 'background': background.toARGB32(), 'text': text.toARGB32()});
   }
 
   static void zoom() {

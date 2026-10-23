@@ -3,8 +3,10 @@
 
 #include <windows.h>
 
+#include <cstdint>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 
 // A class abstraction for a high DPI-aware Win32 Window. Intended to be
@@ -55,6 +57,10 @@ class Win32Window {
   // Return a RECT representing the bounds of the current client area.
   RECT GetClientArea();
 
+  // 让系统标题栏跟随应用主题而不是系统主题。|background| / |text| 是 ARGB
+  // 颜色，仅在 Windows 11 上生效，更早的系统只能切换深 / 浅色。
+  void SetTitleBarTheme(bool dark, uint32_t background, uint32_t text);
+
  protected:
   // Processes and route salient window messages for mouse handling,
   // size change and DPI. Delegates handling of these to member overloads that
@@ -87,10 +93,20 @@ class Win32Window {
   // Retrieves a class instance pointer for |window|
   static Win32Window* GetThisFromHandle(HWND const window) noexcept;
 
-  // Update the window frame's theme to match the system theme.
-  static void UpdateTheme(HWND const window);
+  // Update the window frame's theme: explicit app theme wins over the system one.
+  void UpdateTheme(HWND const window);
+
+  static void ApplyTitleBarTheme(HWND window,
+                                 bool dark,
+                                 uint32_t background,
+                                 uint32_t text);
 
   bool quit_on_close_ = false;
+
+  // Set by SetTitleBarTheme; empty means follow the system theme.
+  std::optional<bool> title_bar_dark_;
+  uint32_t title_bar_background_ = 0;
+  uint32_t title_bar_text_ = 0;
 
   // window handle for top level window.
   HWND window_handle_ = nullptr;

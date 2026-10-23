@@ -16,6 +16,17 @@ namespace {
 #define DWMWA_USE_IMMERSIVE_DARK_MODE 20
 #endif
 
+/// 标题栏配色，仅 Windows 11 支持；更早的系统调用会失败，保持深 / 浅色标题栏。
+#ifndef DWMWA_BORDER_COLOR
+#define DWMWA_BORDER_COLOR 34
+#endif
+#ifndef DWMWA_CAPTION_COLOR
+#define DWMWA_CAPTION_COLOR 35
+#endif
+#ifndef DWMWA_TEXT_COLOR
+#define DWMWA_TEXT_COLOR 36
+#endif
+
 constexpr const wchar_t kWindowClassName[] = L"FLUTTER_RUNNER_WIN32_WINDOW";
 
 /// Registry key for app theme preference.
@@ -144,6 +155,8 @@ bool Win32Window::Create(const std::wstring& title,
     return false;
   }
 
+  // 应用默认深色主题；Dart 侧首帧会按实际设置同步一次
+  title_bar_dark_ = true;
   UpdateTheme(window);
 
   return OnCreate();
@@ -272,7 +285,22 @@ void Win32Window::OnDestroy() {
   // No-op; provided for subclasses.
 }
 
+void Win32Window::SetTitleBarTheme(bool dark,
+                                   uint32_t background,
+                                   uint32_t text) {
+  title_bar_dark_ = dark;
+  title_bar_background_ = background;
+  title_bar_text_ = text;
+  ApplyTitleBarTheme(window_handle_, dark, background, text);
+}
+
 void Win32Window::UpdateTheme(HWND const window) {
+  if (title_bar_dark_.has_value()) {
+    ApplyTitleBarTheme(window, *title_bar_dark_, title_bar_background_,
+                       title_bar_text_);
+    return;
+  }
+
   DWORD light_mode;
   DWORD light_mode_size = sizeof(light_mode);
   LSTATUS result = RegGetValue(HKEY_CURRENT_USER, kGetPreferredBrightnessRegKey,
@@ -281,8 +309,46 @@ void Win32Window::UpdateTheme(HWND const window) {
                                &light_mode_size);
 
   if (result == ERROR_SUCCESS) {
-    BOOL enable_dark_mode = light_mode == 0;
-    DwmSetWindowAttribute(window, DWMWA_USE_IMMERSIVE_DARK_MODE,
-                          &enable_dark_mode, sizeof(enable_dark_mode));
+    ApplyTitleBarTheme(window, light_mode == 0, 0, 0);
   }
+}
+
+// static
+void Win32Window::ApplyTitleBarTheme(HWND window,
+                                     bool dark,
+                                     uint32_t background,
+                                     uint32_t text) {
+  if (window == nullptr) {
+    return;
+  }
+
+  BOOL enable_dark_mode = dark;
+  DwmSetWindowAttribute(window, DWMWA_USE_IMMERSIVE_DARK_MODE,
+                        &enable_dark_mode, sizeof(enable_dark_mode));
+
+  // background 为 0 表示不指定颜色，沿用系统标题栏配色
+  if (background != 0) {
+    COLORREF background_color = RGB((background >> 16) & 0xff,
+                                    (background >> 8) & 0xff,
+                                    background & 0xff);
+    COLORREF text_color =
+        RGB((text >> 16) & 0xff, (text >> 8) & 0xff, text & 0xff);
+    DwmSetWindowAttribute(window, DWMWA_CAPTION_COLOR, &background_color,
+                          sizeof(background_color));
+    DwmSetWindowAttribute(window, DWMWA_TEXT_COLOR, &text_color,
+                          sizeof(text_color));
+    DwmSetWindowAttribute(window, DWMWA_BORDER_COLOR, &background_color,
+                          sizeof(background_color));
+  }
+
+  // 只改属性 DWM 不会立刻重画标题栏，要等窗口激活状态变化才刷新（Windows 10 实测如此）。
+  // 关掉再打开非客户区渲染能强制 DWM 重建标题栏，且不像隐藏/显示窗口那样闪一下。
+  DWMNCRENDERINGPOLICY disabled = DWMNCRP_DISABLED;
+  DwmSetWindowAttribute(window, DWMWA_NCRENDERING_POLICY, &disabled,
+                        sizeof(disabled));
+  DWMNCRENDERINGPOLICY enabled = DWMNCRP_ENABLED;
+  DwmSetWindowAttribute(window, DWMWA_NCRENDERING_POLICY, &enabled,
+                        sizeof(enabled));
+  RedrawWindow(window, nullptr, nullptr,
+               RDW_FRAME | RDW_INVALIDATE | RDW_UPDATENOW);
 }
