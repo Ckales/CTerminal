@@ -379,6 +379,11 @@ class _TerminalViewState extends State<TerminalView> with DeltaTextInputClient {
   @override
   void connectionClosed() {
     _input = null;
+    // 引擎会自行关闭输入连接（窗口激活切换、首帧显示等），而终端焦点没变，
+    // 不重新 attach 字符与输入法输入就永久丢失（特殊键不走这条连接，所以看起来"只有打字坏了"）
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && _focus.hasFocus && (_input == null || !_input!.attached)) _attachInput();
+    });
   }
 
   @override
@@ -453,7 +458,17 @@ class _TerminalViewState extends State<TerminalView> with DeltaTextInputClient {
       key = label.length == 1 ? label.toLowerCase() : null;
       text = event.character ?? '';
     }
-    if (key == null) return KeyEventResult.ignored;
+    if (key == null) {
+      // Windows 下字符键直接按按键事件发送：平台文本通道只承担输入法组合
+      //（组合期间 character 为空，仍走 updateEditingValueWithDeltas 提交）。
+      // macOS 的 character 在组合期间也有值，不能在这里吞掉首键，保持 IME 优先。
+      final character = Platform.isWindows ? event.character : null;
+      if (character == null || character.isEmpty || character.runes.any((rune) => rune < 0x20 || rune == 0x7f)) {
+        return KeyEventResult.ignored;
+      }
+      key = '';
+      text = character;
+    }
 
     var handled = false;
     for (final target in app.inputTargets()) {
