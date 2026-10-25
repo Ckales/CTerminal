@@ -120,6 +120,75 @@ void main() {
   }
 
   group('真实内核', () {
+    for (final key in [LogicalKeyboardKey.enter, LogicalKeyboardKey.numpadEnter]) {
+      testWidgets('多行粘贴弹窗可用 ${key.keyLabel} 确认，确认键不进入终端', (tester) async {
+        final app = await boot(tester);
+        final session = app.activeSession!;
+        app.terminal['warnOnMultilinePaste'] = true;
+        tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(SystemChannels.platform, (call) async {
+          if (call.method == 'Clipboard.getData') {
+            return {'text': "printf 'paste-first\\n'\nprintf 'paste-last\\n'"};
+          }
+          return null;
+        });
+
+        try {
+          final paste = app.pasteClipboard();
+          await tester.pump();
+          await tester.pump(const Duration(milliseconds: 300));
+          expect(find.byType(AlertDialog), findsOneWidget);
+          expect(screen(session), isNot(contains('paste-first')));
+
+          await press(tester, key);
+          await tester.pump(const Duration(milliseconds: 300));
+          expect(find.byType(AlertDialog), findsNothing);
+          await paste;
+          await waitFor(tester, () => screen(session).split('\n').contains('paste-first'), what: '确认后粘贴多行内容');
+          expect(screen(session).split('\n'), isNot(contains('paste-last')), reason: '确认弹窗的回车不能执行最后一行命令');
+
+          await press(tester, LogicalKeyboardKey.enter);
+          await waitFor(tester, () => screen(session).split('\n').contains('paste-last'), what: '用户另按回车后执行最后一行');
+        } finally {
+          await tester.pumpWidget(const SizedBox());
+          app.dispose();
+        }
+      });
+    }
+
+    testWidgets('多行粘贴可用 Escape、取消按钮或 Tab 后回车取消', (tester) async {
+      final app = await boot(tester);
+      final session = app.activeSession!;
+      app.terminal['warnOnMultilinePaste'] = true;
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(SystemChannels.platform, (call) async {
+        if (call.method == 'Clipboard.getData') return {'text': 'paste-cancel-first\npaste-cancel-last'};
+        return null;
+      });
+
+      try {
+        for (final cancel in ['escape', 'click', 'tab']) {
+          final paste = app.pasteClipboard();
+          await tester.pump();
+          await tester.pump(const Duration(milliseconds: 300));
+          expect(find.byType(AlertDialog), findsOneWidget);
+          if (cancel == 'escape') {
+            await press(tester, LogicalKeyboardKey.escape);
+          } else if (cancel == 'click') {
+            await tester.tap(find.widgetWithText(TextButton, tr('取消')));
+          } else {
+            await press(tester, LogicalKeyboardKey.tab);
+            await press(tester, LogicalKeyboardKey.enter);
+          }
+          await tester.pump(const Duration(milliseconds: 300));
+          expect(find.byType(AlertDialog), findsNothing);
+          await paste;
+          expect(screen(session), isNot(contains('paste-cancel')));
+        }
+      } finally {
+        await tester.pumpWidget(const SizedBox());
+        app.dispose();
+      }
+    });
+
     testWidgets('vim 中闪烁熄灭后快速按上下方向键，光标立即恢复且持续可见', (tester) async {
       final app = await boot(tester);
       final session = app.activeSession!;

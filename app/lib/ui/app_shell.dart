@@ -94,6 +94,7 @@ class _CTerminalAppState extends State<CTerminalApp> with WidgetsBindingObserver
           title: '粘贴多行内容？',
           message: text.length > 2000 ? '${text.substring(0, 2000)}…' : text,
           confirm: '粘贴',
+          autofocusConfirm: true,
         );
 
     var restored = false;

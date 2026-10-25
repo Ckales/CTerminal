@@ -309,7 +309,7 @@ Future<String?> showTextPrompt(BuildContext context, {required String title, Str
   );
 }
 
-Future<bool> showConfirm(BuildContext context, {required String title, required String message, String confirm = '确定', bool danger = false}) async {
+Future<bool> showConfirm(BuildContext context, {required String title, required String message, String confirm = '确定', bool danger = false, bool autofocusConfirm = false}) async {
   final colors = AppTheme.of(context);
   final result = await showDialog<bool>(
     context: context,
@@ -322,6 +322,7 @@ Future<bool> showConfirm(BuildContext context, {required String title, required 
       actions: [
         TextButton(onPressed: () => Navigator.of(dialogContext).pop(false), child: Text(tr('取消'))),
         FilledButton(
+          autofocus: autofocusConfirm,
           style: danger ? FilledButton.styleFrom(backgroundColor: colors.danger) : null,
           onPressed: () => Navigator.of(dialogContext).pop(true),
           child: Text(tr(confirm)),
