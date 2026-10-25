@@ -26,6 +26,24 @@ const _flutterRoot = '/opt/homebrew/share/flutter';
 final _boundary = GlobalKey();
 
 class _FakeApi extends Fake implements RustLibApi {
+  String history = '[]';
+  bool failHistoryLoad = false;
+
+  @override
+  String crateApiAiAiHistoryLoad() {
+    if (failHistoryLoad) throw StateError('invalid history');
+    return history;
+  }
+
+  @override
+  void crateApiAiAiHistorySave({required String json}) {
+    history = json;
+  }
+
+  @override
+  String crateApiAiAiHistoryResume({required String messagesJson}) =>
+      messagesJson;
+
   @override
   String crateApiSettingsColorSchemes() => '[]';
 
@@ -160,9 +178,10 @@ void main() {
   final outputDir = Platform.environment['CTERMINAL_AI_SHOTS'];
   final enabled = outputDir != null && outputDir.trim().isNotEmpty;
 
+  final api = _FakeApi();
   setUpAll(() async {
     if (!enabled) return;
-    RustLib.initMock(api: _FakeApi());
+    RustLib.initMock(api: api);
     await _loadFont('MaterialIcons', [
       '$_flutterRoot/bin/cache/artifacts/material_fonts/MaterialIcons-Regular.otf',
     ]);
@@ -245,5 +264,27 @@ void main() {
     await _saveShot(tester, '06-ai-command-approval', dir);
     await tester.pumpWidget(const SizedBox());
     approvalApp.dispose();
+
+    api.history = jsonEncode([{
+      'id': 'saved-preview',
+      'messages': [
+        {'role': 'user', 'content': '查看本地项目结构'},
+        {'role': 'assistant', 'content': '项目包含 lib、test 和 README.md。'},
+      ],
+      'draft': '继续解释',
+      'presetId': 'general',
+      'updatedAt': DateTime.now().millisecondsSinceEpoch,
+    }]);
+    final historyApp = AppState(config: _config())..aiVisible = true;
+    await tester.pumpWidget(_frame(historyApp, AiWorkspace(child: _terminalExample())));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('历史会话'));
+    await tester.pumpAndSettle();
+    await _saveShot(tester, '07-ai-history', dir);
+    await tester.tap(find.text('查看本地项目结构'));
+    await tester.pumpAndSettle();
+    await _saveShot(tester, '08-ai-history-reopened', dir);
+    await tester.pumpWidget(const SizedBox());
+    historyApp.dispose();
   }, skip: !enabled);
 }

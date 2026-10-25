@@ -14,6 +14,7 @@ import '../terminal/terminal_session.dart';
 import '../theme.dart';
 
 class _Conversation {
+  String id = DateTime.now().microsecondsSinceEpoch.toString();
   final messages = <Map<String, dynamic>>[];
   String draft = '';
   String context = '';
@@ -54,18 +55,242 @@ class _AiWorkspaceState extends State<AiWorkspace> {
   double _bottomHeight = 310;
 
   Timer? _renderTimer;
+  Timer? _saveTimer;
+  AppState? _app;
+  final _history = <String, Map<String, dynamic>>{};
+  _Conversation? _historyChat;
+  String? _storageError;
+  bool _historyLoaded = false;
+  String? _lastSavedHistory;
+
+  Iterable<_Conversation> get _chats => {
+    ..._conversations.values,
+    ?_historyChat,
+  };
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_app != null) return;
+    _app = AppScope.read(context)..saveAiHistory = _saveHistory;
+    try {
+      for (final item in jsonDecode(ai.aiHistoryLoad()) as List) {
+        final record = Map<String, dynamic>.from(item as Map);
+        _history[record['id'] as String] = record;
+      }
+      _historyLoaded = true;
+    } catch (error) {
+      _storageError = tr('读取历史会话失败：{error}', {'error': '$error'});
+    }
+  }
+
+  void _changed(VoidCallback action) {
+    setState(action);
+    _saveTimer ??= Timer(const Duration(milliseconds: 350), () {
+      _saveTimer = null;
+      _saveHistory();
+    });
+  }
+
+  void _remember(_Conversation chat) {
+    if (chat.messages.isEmpty && chat.draft.isEmpty && chat.partial.isEmpty && chat.context.isEmpty) {
+      _history.remove(chat.id);
+      return;
+    }
+    final record = <String, dynamic>{
+      'id': chat.id,
+      'messages': chat.messages,
+      'draft': chat.draft,
+      'context': chat.context,
+      'presetId': chat.presetId,
+      'partial': chat.partial,
+    };
+    final previous = _history[chat.id];
+    if (previous != null) {
+      final comparable = Map<String, dynamic>.of(previous)..remove('updatedAt');
+      if (jsonEncode(comparable) == jsonEncode(record)) return;
+    }
+    // Snapshot mutable messages before a terminal closes or a new chat replaces it.
+    _history[chat.id] = Map<String, dynamic>.from(
+      jsonDecode(jsonEncode(record)) as Map,
+    )..['updatedAt'] = DateTime.now().millisecondsSinceEpoch;
+  }
+
+  void _saveHistory({bool notify = true}) {
+    _saveTimer?.cancel();
+    _saveTimer = null;
+    if (!_historyLoaded) return;
+    for (final chat in _chats) {
+      _remember(chat);
+    }
+    try {
+      final json = jsonEncode(_history.values.toList());
+      if (json != _lastSavedHistory) {
+        ai.aiHistorySave(json: json);
+        _lastSavedHistory = json;
+      }
+      if (_storageError != null && mounted && notify) {
+        setState(() => _storageError = null);
+      }
+    } catch (error) {
+      final message = tr('保存历史会话失败：{error}', {'error': '$error'});
+      if (mounted && notify) setState(() => _storageError = message);
+    }
+  }
+
+  TerminalSession? _sessionFor(_Conversation chat) {
+    for (final entry in _conversations.entries) {
+      if (identical(entry.value, chat)) return entry.key;
+    }
+    return null;
+  }
+
+  void _newChat() {
+    _saveHistory();
+    _changed(() {
+      _historyChat = null;
+      final session = AppScope.read(context).activeSession;
+      final current = _conversations[session];
+      if (current != null &&
+          (current.pending || current.executing || current.toolCall != null)) {
+        return;
+      }
+      _conversations[session] = _Conversation();
+    });
+  }
+
+  String _historyTitle(Map<String, dynamic> record) {
+    for (final message in record['messages'] as List) {
+      if (message['role'] == 'user' && message['content'] is String) {
+        return (message['content'] as String).split('\n').first;
+      }
+    }
+    return (record['draft'] as String?)?.split('\n').first ?? tr('新对话');
+  }
+
+  Future<void> _showHistory() async {
+    _saveHistory();
+    final records = _history.values.toList()
+      ..sort(
+        (a, b) => (b['updatedAt'] as int).compareTo(a['updatedAt'] as int),
+      );
+    final id = await showDialog<String>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, updateDialog) => AlertDialog(
+          title: Text(tr('历史会话')),
+          content: SizedBox(
+            width: 480,
+            height: 360,
+            child: records.isEmpty
+                ? Center(child: Text(tr('暂无历史会话')))
+                : ListView.builder(
+                    itemCount: records.length,
+                    itemBuilder: (context, index) {
+                      final record = records[index];
+                      final date = DateTime.fromMillisecondsSinceEpoch(
+                        record['updatedAt'] as int,
+                      ).toLocal();
+                      return ListTile(
+                        leading: const Icon(
+                          Icons.chat_bubble_outline,
+                          size: 18,
+                        ),
+                        title: Text(
+                          _historyTitle(record),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        subtitle: Text(date.toString().split('.').first),
+                        onTap: () =>
+                            Navigator.pop(context, record['id'] as String),
+                        trailing: IconButton(
+                          tooltip: tr('删除会话'),
+                          icon: const Icon(Icons.delete_outline, size: 18),
+                          onPressed:
+                              _chats.any(
+                                (chat) =>
+                                    chat.id == record['id'] &&
+                                    (chat.pending ||
+                                        chat.executing ||
+                                        chat.toolCall != null),
+                              )
+                              ? null
+                              : () {
+                                  _changed(() {
+                                    _conversations.removeWhere(
+                                      (_, chat) => chat.id == record['id'],
+                                    );
+                                    if (_historyChat?.id == record['id']) {
+                                      _historyChat = null;
+                                    }
+                                    _history.remove(record['id']);
+                                  });
+                                  _saveHistory();
+                                  updateDialog(() => records.removeAt(index));
+                                },
+                        ),
+                      );
+                    },
+                  ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: Text(tr('关闭')),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (id == null || !mounted) return;
+    final old = _historyChat;
+    if (old != null && !_conversations.values.contains(old)) {
+      if (old.pending) _stop(old);
+      _remember(old);
+    }
+    for (final chat in _conversations.values) {
+      if (chat.id == id) {
+        _changed(() => _historyChat = chat);
+        return;
+      }
+    }
+    final record = _history[id]!;
+    try {
+      final messages = jsonDecode(
+        ai.aiHistoryResume(messagesJson: jsonEncode(record['messages'])),
+      ) as List;
+      final chat = _Conversation()
+        ..id = id
+        ..messages.addAll(
+          messages.map((m) => Map<String, dynamic>.from(m as Map)),
+        )
+        ..draft = record['draft'] as String? ?? ''
+        ..context = record['context'] as String? ?? ''
+        ..presetId = record['presetId'] as String?;
+      final partial = record['partial'] as String? ?? '';
+      if (partial.isNotEmpty) {
+        chat.messages.add({'role': 'assistant', 'content': partial});
+      }
+      _changed(() => _historyChat = chat);
+    } catch (error) {
+      _changed(
+        () => _storageError = tr('读取历史会话失败：{error}', {'error': '$error'}),
+      );
+    }
+  }
 
   void _refresh() {
     _renderTimer ??= Timer(const Duration(milliseconds: 32), () {
       _renderTimer = null;
-      if (mounted) setState(() {});
+      if (mounted) _changed(() {});
     });
   }
 
   void _finish(_Conversation chat, int id, String kind, String text) {
     if (!mounted || chat.requestId != id) return;
     final subscription = chat.subscription;
-    setState(() {
+    _changed(() {
       chat.pending = false;
       chat.requestId = null;
       chat.subscription = null;
@@ -102,13 +327,13 @@ class _AiWorkspaceState extends State<AiWorkspace> {
         terminalId: chat.terminalId!,
         callId: chat.executingCallId!,
       );
-      setState(() => chat.status = tr('正在停止命令…'));
+      _changed(() => chat.status = tr('正在停止命令…'));
       return;
     }
     final id = chat.requestId;
     if (id == null) return;
     final subscription = chat.subscription;
-    setState(() {
+    _changed(() {
       chat.requestId = null;
       chat.subscription = null;
       chat.pending = false;
@@ -119,7 +344,7 @@ class _AiWorkspaceState extends State<AiWorkspace> {
   }
 
   void _send(_Conversation chat, {bool retry = false}) {
-    if (!_conversations.values.contains(chat)) return;
+    if (!_chats.contains(chat)) return;
     if (chat.pending ||
         chat.executing ||
         chat.toolCall != null ||
@@ -130,15 +355,13 @@ class _AiWorkspaceState extends State<AiWorkspace> {
     final app = AppScope.read(context);
     final defaultPreset =
         (app.config['ai'] as Map?)?['activePreset'] as String? ?? 'general';
-    final session = _conversations.entries
-        .firstWhere((entry) => identical(entry.value, chat))
-        .key;
+    final session = _sessionFor(chat);
     final restarted = chat.terminalId != null && chat.terminalId != session?.id;
     if (retry && restarted) {
-      setState(() => chat.error = tr('终端已重启，请发送新消息开始对话'));
+      _changed(() => chat.error = tr('终端已重启，请发送新消息开始对话'));
       return;
     }
-    setState(() {
+    _changed(() {
       if (restarted) {
         chat.messages.clear();
         chat.partial = '';
@@ -172,7 +395,7 @@ class _AiWorkspaceState extends State<AiWorkspace> {
   }
 
   void _startStream(_Conversation chat) {
-    setState(() {
+    _changed(() {
       chat.partial = '';
       chat.error = null;
       chat.status = '';
@@ -208,7 +431,7 @@ class _AiWorkspaceState extends State<AiWorkspace> {
               );
               message['content'] = chat.partial;
               // Rust validates the tool schema before emitting this complete message.
-              setState(() {
+              _changed(() {
                 chat.messages.add(message);
                 chat.toolCall = message;
                 chat.partial = '';
@@ -232,7 +455,7 @@ class _AiWorkspaceState extends State<AiWorkspace> {
     } catch (error) {
       final id = chat.requestId;
       if (id != null) ai.aiChatCancel(requestId: id);
-      setState(() {
+      _changed(() {
         chat.requestId = null;
         chat.pending = false;
         chat.error = '$error';
@@ -251,6 +474,8 @@ class _AiWorkspaceState extends State<AiWorkspace> {
         callId: old.executingCallId!,
       );
     }
+    _remember(old);
+    if (identical(_historyChat, old)) _historyChat = null;
     _conversations[session] = _Conversation()
       ..draft = old.draft
       ..presetId = old.presetId
@@ -259,12 +484,10 @@ class _AiWorkspaceState extends State<AiWorkspace> {
   }
 
   Future<void> _resolveTool(_Conversation chat, bool approve) async {
-    if (!_conversations.values.contains(chat)) return;
-    final session = _conversations.entries
-        .firstWhere((entry) => identical(entry.value, chat))
-        .key;
+    if (!_chats.contains(chat)) return;
+    final session = _sessionFor(chat);
     if (session != null && chat.terminalId != session.id) {
-      setState(() => _resetRestarted(session, chat));
+      _changed(() => _resetRestarted(session, chat));
       return;
     }
     final message = chat.toolCall;
@@ -274,7 +497,7 @@ class _AiWorkspaceState extends State<AiWorkspace> {
         jsonDecode((call['function'] as Map)['arguments'] as String) as Map;
     final callId = call['id'] as String;
     final terminalId = chat.terminalId;
-    setState(() {
+    _changed(() {
       chat.toolCall = null;
       chat.executing = approve;
       chat.executingCallId = approve ? callId : null;
@@ -303,9 +526,27 @@ class _AiWorkspaceState extends State<AiWorkspace> {
         'exitCode': null,
       });
     }
-    // The originating session may have been closed while the command was running.
-    if (!mounted || !_conversations.values.contains(chat)) return;
-    setState(() {
+    // Keep a late result in history even after its terminal has closed.
+    if (!mounted) return;
+    if (!_conversations.values.contains(chat)) {
+      final archived = _history[chat.id];
+      if (archived != null) {
+        final message = <String, dynamic>{
+          'role': 'tool',
+          'tool_call_id': callId,
+          'content': result,
+        };
+        (archived['messages'] as List).add(message);
+        archived['updatedAt'] = DateTime.now().millisecondsSinceEpoch;
+        if (_historyChat?.id == chat.id) {
+          final resumed = jsonDecode(ai.aiHistoryResume(messagesJson: jsonEncode([message]))) as List;
+          _changed(() => _historyChat!.messages.addAll(resumed.map((m) => Map<String, dynamic>.from(m as Map))));
+        }
+        _saveHistory();
+      }
+      return;
+    }
+    _changed(() {
       chat.executing = false;
       chat.executingCallId = null;
       chat.messages.add({
@@ -320,7 +561,7 @@ class _AiWorkspaceState extends State<AiWorkspace> {
       chat.status = '';
     });
     if (chat.toolRounds >= 8) {
-      setState(() => chat.status = tr('已达到本轮命令上限，请发送新消息继续'));
+      _changed(() => chat.status = tr('已达到本轮命令上限，请发送新消息继续'));
       return;
     }
     _startStream(chat);
@@ -328,9 +569,12 @@ class _AiWorkspaceState extends State<AiWorkspace> {
 
   @override
   void dispose() {
+    _saveHistory(notify: false);
+    _saveTimer?.cancel();
+    _app?.saveAiHistory = null;
     _renderTimer?.cancel();
     _dockSize.dispose();
-    for (final chat in _conversations.values) {
+    for (final chat in _chats) {
       final id = chat.requestId;
       if (id != null) ai.aiChatCancel(requestId: id);
       if (chat.executingCallId != null && chat.terminalId != null) {
@@ -356,6 +600,8 @@ class _AiWorkspaceState extends State<AiWorkspace> {
         .toList();
     for (final session in closed) {
       final chat = _conversations.remove(session)!;
+      _remember(chat);
+      if (identical(_historyChat, chat)) _historyChat = null;
       final id = chat.requestId;
       chat.requestId = null;
       if (id != null) ai.aiChatCancel(requestId: id);
@@ -369,14 +615,16 @@ class _AiWorkspaceState extends State<AiWorkspace> {
     }
     final content = KeyedSubtree(key: _contentKey, child: widget.child);
     if (!app.aiVisible) return content;
-    final session = app.activeSession;
-    var chat = _conversations.putIfAbsent(
-      session,
-      () => _Conversation()
-        ..presetId =
-            ((app.config['ai'] as Map?)?['activePreset'] as String? ??
-            'general'),
-    );
+    var chat =
+        _historyChat ??
+        _conversations.putIfAbsent(
+          app.activeSession,
+          () => _Conversation()
+            ..presetId =
+                ((app.config['ai'] as Map?)?['activePreset'] as String? ??
+                'general'),
+        );
+    final session = _sessionFor(chat);
     if (session != null &&
         chat.terminalId != null &&
         chat.terminalId != session.id) {
@@ -395,7 +643,12 @@ class _AiWorkspaceState extends State<AiWorkspace> {
           dockAtBottom: vertical,
           chat: chat,
           session: session,
-          onChanged: () => setState(() {}),
+          storageError: _storageError,
+          onHistory: _showHistory,
+          onNew: chat.pending || chat.executing || chat.toolCall != null
+              ? null
+              : _newChat,
+          onChanged: () => _changed(() {}),
           onSend: () => _send(chat),
           onRetry: () => _send(chat, retry: true),
           onStop: () => _stop(chat),
@@ -490,7 +743,13 @@ class _AiPanel extends StatefulWidget {
     required this.onRetry,
     required this.onStop,
     required this.onToolDecision,
+    required this.onHistory,
+    required this.onNew,
+    required this.storageError,
   });
+  final VoidCallback onHistory;
+  final VoidCallback? onNew;
+  final String? storageError;
   final _Conversation chat;
   final bool dockAtBottom;
   final TerminalSession? session;
@@ -636,14 +895,20 @@ class _AiPanelState extends State<_AiPanel> {
                     color: colors.accent,
                   ),
                   const SizedBox(width: 8),
-                  Text(
-                    tr('AI 助手'),
-                    style: const TextStyle(
-                      fontSize: 13,
-                      fontWeight: FontWeight.w600,
+                  Flexible(
+                    child: Text(
+                      tr('AI 助手'),
+                      overflow: TextOverflow.ellipsis,
+                      maxLines: 1,
+                      style: const TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                      ),
                     ),
                   ),
                   const Spacer(),
+                  _button(Icons.history, tr('历史会话'), widget.onHistory),
+                  _button(Icons.add, tr('新对话'), widget.onNew),
                   _button(
                     Icons.tune,
                     tr('AI 设置'),
@@ -718,6 +983,17 @@ class _AiPanelState extends State<_AiPanel> {
                 ],
               ),
             ),
+            if (widget.storageError != null)
+              Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 14,
+                  vertical: 4,
+                ),
+                child: Text(
+                  widget.storageError!,
+                  style: TextStyle(color: colors.textDim, fontSize: 11),
+                ),
+              ),
             _presetSelector(config, chat),
             if (chat.messages.isEmpty && chat.status.isNotEmpty)
               Padding(

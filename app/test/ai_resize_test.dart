@@ -8,6 +8,24 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 class _FakeApi extends Fake implements RustLibApi {
+  String history = '[]';
+  bool failHistoryLoad = false;
+
+  @override
+  String crateApiAiAiHistoryLoad() {
+    if (failHistoryLoad) throw StateError('invalid history');
+    return history;
+  }
+
+  @override
+  void crateApiAiAiHistorySave({required String json}) {
+    history = json;
+  }
+
+  @override
+  String crateApiAiAiHistoryResume({required String messagesJson}) =>
+      messagesJson;
+
   @override
   String crateApiSettingsColorSchemes() => '[]';
 

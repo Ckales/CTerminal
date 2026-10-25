@@ -89,6 +89,7 @@ class AppState extends ChangeNotifier {
   bool aiVisible = false;
   /// Registered by the AI composer so terminal rebuilds preserve its keyboard focus.
   FocusNode? aiInputFocus;
+  VoidCallback? saveAiHistory;
 
   void toggleAi() {
     aiVisible = !aiVisible;
@@ -799,6 +800,7 @@ class AppState extends ChangeNotifier {
   }
 
   Future<void> saveState() async {
+    saveAiHistory?.call();
     final layouts = [
       for (final tab in tabs)
         if (tab is TerminalTab) {'layout': _serializeNode(tab.tree.root), 'title': tab.customTitle, 'color': tab.color, 'pinned': tab.pinned},

@@ -73,6 +73,14 @@ void aiToolCancel({required int terminalId, required String callId}) => RustLib
     .api
     .crateApiAiAiToolCancel(terminalId: terminalId, callId: callId);
 
+String aiHistoryLoad() => RustLib.instance.api.crateApiAiAiHistoryLoad();
+
+void aiHistorySave({required String json}) =>
+    RustLib.instance.api.crateApiAiAiHistorySave(json: json);
+
+String aiHistoryResume({required String messagesJson}) =>
+    RustLib.instance.api.crateApiAiAiHistoryResume(messagesJson: messagesJson);
+
 class AiChatEvent {
   final String kind;
   final String text;

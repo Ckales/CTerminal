@@ -22,6 +22,12 @@ String tr(String source, [Map<String, Object?> args = const {}]) {
 }
 
 const _english = <String, String>{
+  '删除会话': 'Delete conversation',
+  '历史会话': 'Conversation history',
+  '暂无历史会话': 'No saved conversations',
+  '新对话': 'New conversation',
+  '读取历史会话失败：{error}': 'Could not load conversation history: {error}',
+  '保存历史会话失败：{error}': 'Could not save conversation history: {error}',
   '待执行命令': 'Command to run',
   '低风险命令自动执行，危险或未知命令仍需确认': 'Run low-risk commands automatically; dangerous or unknown commands require approval',
   '每条命令执行前询问': 'Ask before running each command',

@@ -15,6 +15,24 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 class _FakeApi extends Fake implements RustLibApi {
+  String history = '[]';
+  bool failHistoryLoad = false;
+
+  @override
+  String crateApiAiAiHistoryLoad() {
+    if (failHistoryLoad) throw StateError('invalid history');
+    return history;
+  }
+
+  @override
+  void crateApiAiAiHistorySave({required String json}) {
+    history = json;
+  }
+
+  @override
+  String crateApiAiAiHistoryResume({required String messagesJson}) =>
+      messagesJson;
+
   bool hasApiKey = true;
   int nextRequestId = 100;
   final agentChats =
@@ -49,6 +67,9 @@ class _FakeApi extends Fake implements RustLibApi {
 
   @override
   String crateApiSettingsColorSchemes() => '[]';
+
+  @override
+  String crateApiTerminalTermCwd({required int id}) => '/tmp';
 
   @override
   Future<void> crateApiSettingsStateSave({required String json}) async {}
@@ -237,6 +258,8 @@ void main() {
   });
 
   setUp(() {
+    api.history = '[]';
+    api.failHistoryLoad = false;
     api.hasApiKey = true;
     api.chats.clear();
     api.agentChats.clear();
@@ -293,6 +316,122 @@ void main() {
     await tester.pumpAndSettle();
     return app;
   }
+
+  testWidgets('消息和草稿保存到本地，重建后可从历史恢复并独立续聊', (tester) async {
+    final app = await mountWorkspace(tester);
+    await tester.enterText(find.byKey(const ValueKey('ai-input')), 'saved question');
+    await tester.pump();
+    await tester.tap(find.byTooltip('发送'));
+    await tester.pump();
+    api.chats.single.events.add(const ai.AiChatEvent(kind: 'delta', text: 'saved answer'));
+    api.chats.single.events.add(const ai.AiChatEvent(kind: 'done', text: ''));
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.enterText(find.byKey(const ValueKey('ai-input')), 'next draft');
+    await app.saveState();
+    final stored = jsonDecode(api.history) as List;
+    expect(stored.single['messages'], [
+      {'role': 'user', 'content': 'saved question'},
+      {'role': 'assistant', 'content': 'saved answer'},
+    ]);
+    expect(stored.single['draft'], 'next draft');
+    expect(stored.single.containsKey('terminalId'), isFalse);
+    await tester.pumpWidget(const SizedBox.shrink());
+    app.dispose();
+    final reopened = await mountWorkspace(tester, sessions: [_session('different')], startSessions: true);
+    await tester.tap(find.byTooltip('历史会话'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('saved question'));
+    await tester.pumpAndSettle();
+    expect(find.text('saved answer'), findsOneWidget);
+    expect(tester.widget<TextField>(find.byKey(const ValueKey('ai-input'))).controller!.text, 'next draft');
+    await tester.pump();
+    await tester.tap(find.byTooltip('发送'));
+    await tester.pump();
+    expect(api.agentChats, isEmpty);
+    expect(api.chats, hasLength(2));
+    expect(jsonDecode(api.chats.last.messages), contains(equals({'role': 'assistant', 'content': 'saved answer'})));
+    reopened.dispose();
+  });
+
+  testWidgets('新对话归档旧草稿，历史支持打开和删除', (tester) async {
+    final app = await mountWorkspace(tester);
+    await tester.enterText(find.byKey(const ValueKey('ai-input')), 'archived draft');
+    await tester.tap(find.byTooltip('新对话'));
+    await tester.pumpAndSettle();
+    expect(tester.widget<TextField>(find.byKey(const ValueKey('ai-input'))).controller!.text, isEmpty);
+    await tester.tap(find.byTooltip('历史会话'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('archived draft'));
+    await tester.pumpAndSettle();
+    expect(tester.widget<TextField>(find.byKey(const ValueKey('ai-input'))).controller!.text, 'archived draft');
+    await tester.tap(find.byTooltip('历史会话'));
+    await tester.pumpAndSettle();
+    expect(jsonDecode(api.history), hasLength(1), reason: api.history);
+    await tester.tap(find.byTooltip('删除会话'));
+    await tester.pumpAndSettle();
+    expect(find.text('暂无历史会话'), findsOneWidget);
+    expect(jsonDecode(api.history), isEmpty);
+    await tester.tap(find.text('关闭').last);
+    await tester.pumpAndSettle();
+    app.dispose();
+  });
+
+  testWidgets('关闭终端后历史仍保留未完成回复', (tester) async {
+    final session = _session('first');
+    final app = await mountWorkspace(tester, sessions: [session], startSessions: true);
+    await tester.enterText(find.byKey(const ValueKey('ai-input')), 'partial question');
+    await tester.pump();
+    await tester.tap(find.byTooltip('发送'));
+    await tester.pump();
+    api.agentChats.single.events.add(const ai.AiChatEvent(kind: 'delta', text: 'partial answer'));
+    await tester.pump(const Duration(milliseconds: 40));
+    app.closeTab(app.tabs.first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('历史会话'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('partial question'));
+    await tester.pumpAndSettle();
+    expect(find.text('partial answer'), findsOneWidget);
+    expect(api.cancelledIds, isNotEmpty);
+    expect(api.toolExecutions, isEmpty);
+    app.dispose();
+  });
+
+  testWidgets('终端关闭后迟到的执行结果仍写入历史', (tester) async {
+    final session = _session('first');
+    final app = await mountWorkspace(tester, sessions: [session], startSessions: true);
+    api.nextToolExecution = Completer<String>();
+    await tester.enterText(find.byKey(const ValueKey('ai-input')), 'inspect');
+    await tester.pump();
+    await tester.tap(find.byTooltip('发送'));
+    await tester.pump();
+    _emitToolCall(api.agentChats.single.events);
+    await tester.pump(const Duration(milliseconds: 50));
+    await tester.ensureVisible(find.text('确认执行'));
+    await tester.tap(find.text('确认执行'));
+    await tester.pump();
+    app.closeTab(app.tabs.first);
+    await tester.pump();
+    api.nextToolExecution!.complete(jsonEncode({'status': 'completed', 'output': 'late output', 'exitCode': 0}));
+    await tester.pumpAndSettle();
+    final messages = (jsonDecode(api.history) as List).single['messages'] as List;
+    expect(messages.last['role'], 'tool');
+    expect(jsonDecode(messages.last['content'] as String)['output'], 'late output');
+    expect(api.agentChats, hasLength(1));
+    app.dispose();
+  });
+
+  testWidgets('历史读取失败显示错误并保留原文件', (tester) async {
+    api.history = '{';
+    api.failHistoryLoad = true;
+    final app = await mountWorkspace(tester);
+    await tester.enterText(find.byKey(const ValueKey('ai-input')), 'do not overwrite');
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(find.textContaining('读取历史会话失败'), findsOneWidget);
+    await app.saveState();
+    expect(api.history, '{');
+    app.dispose();
+  });
 
   testWidgets('未配置服务显示入口且发送不可用', (tester) async {
     final app = await mountWorkspace(tester, service: false);
@@ -462,6 +601,7 @@ void main() {
       'first request',
     );
     await tester.pump();
+    await tester.pump();
     await tester.tap(find.byTooltip('发送'));
     await tester.pump();
     final first = api.chats.single;
@@ -490,6 +630,7 @@ void main() {
       findsOneWidget,
     );
 
+    await tester.pump();
     await tester.tap(find.byTooltip('发送'));
     await tester.pump();
     expect(api.chats, hasLength(2));
@@ -519,6 +660,7 @@ void main() {
       find.byKey(const ValueKey('ai-input')),
       'show current directory',
     );
+    await tester.pump();
     await tester.pump();
     await tester.tap(find.byTooltip('发送'));
     await tester.pump();
@@ -616,6 +758,7 @@ void main() {
       'inspect command',
     );
     await tester.pump();
+    await tester.pump();
     await tester.tap(find.byTooltip('发送'));
     await tester.pump();
     _emitToolCall(api.agentChats.single.events, command: command);
@@ -665,6 +808,7 @@ void main() {
       'inspect directory',
     );
     await tester.pump();
+    await tester.pump();
     await tester.tap(find.byTooltip('发送'));
     await tester.pump();
     _emitToolCall(api.agentChats.single.events);
@@ -696,6 +840,7 @@ void main() {
       find.byKey(const ValueKey('ai-input')),
       'inspect directory',
     );
+    await tester.pump();
     await tester.pump();
     await tester.tap(find.byTooltip('发送'));
     await tester.pump();
@@ -760,6 +905,7 @@ void main() {
       'inspect directory',
     );
     await tester.pump();
+    await tester.pump();
     await tester.tap(find.byTooltip('发送'));
     await tester.pump();
     _emitToolCall(api.agentChats.single.events);
@@ -780,6 +926,7 @@ void main() {
       find.byKey(const ValueKey('ai-input')),
       'show current directory',
     );
+    await tester.pump();
     await tester.pump();
     await tester.tap(find.byTooltip('发送'));
     await tester.pump();
@@ -817,6 +964,7 @@ void main() {
       'show current directory',
     );
     await tester.pump();
+    await tester.pump();
     await tester.tap(find.byTooltip('发送'));
     await tester.pump();
     _emitToolCall(api.agentChats.single.events);
@@ -849,6 +997,7 @@ void main() {
       find.byKey(const ValueKey('ai-input')),
       'show current directory',
     );
+    await tester.pump();
     await tester.pump();
     await tester.tap(find.byTooltip('发送'));
     await tester.pump();
@@ -896,6 +1045,7 @@ void main() {
       'first session',
     );
     await tester.pump();
+    await tester.pump();
     await tester.tap(find.byTooltip('发送'));
     await tester.pump();
     expect(api.chats.single.presetId, 'concise');
@@ -906,6 +1056,7 @@ void main() {
       find.byKey(const ValueKey('ai-input')),
       'second session',
     );
+    await tester.pump();
     await tester.pump();
     await tester.tap(find.byTooltip('发送'));
     await tester.pump();

@@ -180,3 +180,18 @@ pub fn ai_tool_cancel(terminal_id: u32, call_id: String) {
         session.ai_cancel(&call_id);
     }
 }
+
+#[frb(sync)]
+pub fn ai_history_load() -> Result<String, String> {
+    cterm_core::ai_history::load()
+}
+
+#[frb(sync)]
+pub fn ai_history_save(json: String) -> Result<(), String> {
+    cterm_core::ai_history::save(&json)
+}
+
+#[frb(sync)]
+pub fn ai_history_resume(messages_json: String) -> Result<String, String> {
+    cterm_core::ai_history::resume(&messages_json)
+}

@@ -3,6 +3,7 @@
 #[macro_use]
 pub mod i18n;
 pub mod ai;
+pub mod ai_history;
 pub mod ai_terminal;
 pub mod config;
 pub mod connect;
