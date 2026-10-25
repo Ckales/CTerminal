@@ -237,8 +237,11 @@ void main() {
       await press(tester, LogicalKeyboardKey.enter);
       await waitFor(tester, () => screen(session).split('\n').contains('hello 世界'), what: 'echo 输出');
 
-      tester.testTextInput.enterText('sleep 30');
+      // 等 sleep 真正开始运行再发 Ctrl-C：命令还没被 shell 读走时中断会被丢弃，
+      // 慢速 CI 上 sleep 会继续占住终端，后续 echo 只能排队。
+      tester.testTextInput.enterText('echo sleep-5; sleep 30');
       await press(tester, LogicalKeyboardKey.enter);
+      await waitFor(tester, () => screen(session).split('\n').contains('sleep-5'), what: 'sleep 开始运行');
       await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
       await tester.sendKeyEvent(LogicalKeyboardKey.keyC);
       await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);

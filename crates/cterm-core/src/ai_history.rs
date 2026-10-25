@@ -278,10 +278,22 @@ mod tests {
     use std::path::PathBuf;
 
     fn temp_dir(name: &str) -> PathBuf {
+        // 测试线程名包含 `::`，在 Windows 上是非法文件名字符。
+        let thread: String = std::thread::current()
+            .name()
+            .unwrap_or("test")
+            .chars()
+            .map(|ch| {
+                if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {
+                    ch
+                } else {
+                    '-'
+                }
+            })
+            .collect();
         let dir = std::env::temp_dir().join(format!(
-            "cterm-ai-history-{name}-{}-{}",
+            "cterm-ai-history-{name}-{}-{thread}",
             std::process::id(),
-            std::thread::current().name().unwrap_or("test")
         ));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
