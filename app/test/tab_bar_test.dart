@@ -1,7 +1,10 @@
+import 'dart:convert';
+
 import 'package:cterminal/app_state.dart';
 import 'package:cterminal/src/rust/api/update.dart';
 import 'package:cterminal/src/rust/frb_generated.dart';
 import 'package:cterminal/theme.dart';
+import 'package:cterminal/terminal/terminal_session.dart';
 import 'package:cterminal/ui/tab_bar.dart';
 import 'package:cterminal/update_check.dart';
 import 'package:cterminal/window_control.dart';
@@ -9,9 +12,20 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+const _localProfile = {
+  'id': 'test:sh',
+  'name': 'Test shell',
+  'type': 'local',
+  'options': {'command': '/bin/sh'},
+};
+
 class _FakeApi extends Fake implements RustLibApi {
   @override
   String crateApiSettingsColorSchemes() => '[]';
+
+  @override
+  Future<String> crateApiSettingsDefaultProfile() async =>
+      jsonEncode(_localProfile);
 
   @override
   Future<void> crateApiSettingsStateSave({required String json}) async {}
@@ -36,6 +50,7 @@ void main() {
         'hotkeys': <String, dynamic>{},
         'application': <String, dynamic>{},
         'appearance': <String, dynamic>{'flexibleTabs': flexible},
+        'recentProfiles': ['test:sh'],
       },
     );
     for (var i = 0; i < count; i++) {
@@ -80,6 +95,31 @@ void main() {
     await tester.tap(find.byTooltip('AI 助手'));
     await tester.pump();
     expect(app.aiVisible, isTrue);
+  });
+
+  testWidgets('第2页点加号在末尾新增第11页并激活，保留原有标签', (tester) async {
+    final app = await mountBar(tester, count: 10, width: 1000);
+    for (var i = 0; i < app.tabs.length; i++) {
+      app.tabs[i] = TerminalTab(TerminalSession(profile: _localProfile))
+        ..customTitle = 'Existing shell ${i + 1}';
+    }
+    app.selectTab(1);
+    await tester.pumpAndSettle();
+    final originalTabs = List<AppTab>.of(app.tabs);
+
+    await tester.tap(find.byTooltip('新建标签页'));
+    await tester.pumpAndSettle();
+    expect(app.tabs, hasLength(11));
+    expect(originalTabs, isNot(contains(app.activeTab)));
+    expect(app.activeTab, isA<TerminalTab>());
+    expect(app.activeIndex, 10, reason: '新标签应追加到末尾，不应占用原有第3页的位置');
+    expect(app.tabs.take(10), orderedEquals(originalTabs));
+    expect(app.activeTab, same(app.tabs.last));
+    final active = tester.getRect(find.byKey(ValueKey(app.activeTab!.key)));
+    final viewport = tester.getRect(find.byType(ReorderableListView));
+    expect(active.left, greaterThanOrEqualTo(viewport.left));
+    expect(active.right, lessThanOrEqualTo(viewport.right));
+    await tester.pump(const Duration(seconds: 1));
   });
 
   for (final flexible in [false, true]) {

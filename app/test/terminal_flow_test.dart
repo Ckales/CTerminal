@@ -376,6 +376,36 @@ void main() {
       app.dispose();
     });
 
+    testWidgets('第2个终端点加号追加第11页并显示新会话', (tester) async {
+      final app = await boot(tester);
+      try {
+        for (var i = 1; i < 10; i++) {
+          await app.newTab(profile: _shProfile);
+          await tester.pump();
+        }
+        app.selectTab(1);
+        await waitFor(tester, () => app.activeSession?.frame != null && screen(app.activeSession!).contains(r'$'), what: '第2个终端就绪');
+        final originalTabs = List<AppTab>.of(app.tabs);
+        final originalSessions = app.tabs.whereType<TerminalTab>().map((tab) => tab.focused).toList();
+
+        await tester.tap(find.byTooltip(tr('新建标签页')));
+        await waitFor(tester, () => app.tabs.length == 11 && app.activeSession?.frame != null && screen(app.activeSession!).contains(r'$'), what: '加号打开新终端');
+        expect(app.activeIndex, 10);
+        expect(app.tabs.take(10), orderedEquals(originalTabs));
+        expect(app.activeTab, same(app.tabs.last));
+        final newSession = app.activeSession!;
+        expect(originalSessions, isNot(contains(newSession)));
+        expect(originalSessions.map((session) => session.id), isNot(contains(newSession.id)));
+        final painter = tester.widgetList<CustomPaint>(find.byType(CustomPaint))
+            .map((widget) => widget.painter).whereType<TerminalPainter>().single;
+        expect(painter.session, same(newSession), reason: '终端区域必须显示新会话，不能复用旧第3页');
+        expect(find.text('11'), findsOneWidget);
+      } finally {
+        await tester.pumpWidget(const SizedBox());
+        app.dispose();
+      }
+    });
+
     testWidgets('鼠标拖动标签页调整顺序', (tester) async {
       final app = await boot(tester);
       await press(tester, LogicalKeyboardKey.keyT, meta: true);

@@ -227,7 +227,7 @@ class AppState extends ChangeNotifier {
     profile ??= await defaultProfile();
     _rememberRecent(profile);
     final tab = TerminalTab(_newSession(profile, cwd: cwd));
-    tabs.insert(tabs.isEmpty ? 0 : activeIndex + 1, tab);
+    tabs.add(tab);
     activeIndex = tabs.indexOf(tab);
     _changed();
   }
