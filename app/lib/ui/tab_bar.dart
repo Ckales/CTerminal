@@ -11,8 +11,8 @@ import 'profile_icons.dart';
 import 'update_button.dart';
 import '../i18n.dart';
 
-/// 标签栏：放在标题栏里，左侧留出红绿灯，标签后面是 “+” 和配置选择按钮，最右是设置
-class AppTabBar extends StatelessWidget {
+/// 标签栏：左侧留出红绿灯，横向标签独立滚动，右侧操作按钮固定
+class AppTabBar extends StatefulWidget {
   const AppTabBar({super.key, required this.vertical});
 
   final bool vertical;
@@ -20,23 +20,38 @@ class AppTabBar extends StatelessWidget {
   static const height = 38.0;
 
   @override
+  State<AppTabBar> createState() => _AppTabBarState();
+}
+
+class _AppTabBarState extends State<AppTabBar> {
+  final _scrollController = ScrollController();
+  ({String key, double start, double width, double viewport})? _revealTarget;
+
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     final app = AppScope.of(context);
     final colors = AppTheme.of(context);
     final mac = Platform.isMacOS;
-    final trafficLights = mac && !app.fullScreen && !vertical ? 78.0 : 0.0;
+    final trafficLights = mac && !app.fullScreen && !widget.vertical ? 78.0 : 0.0;
 
     final buttons = [
       _ChromeButton(icon: Icons.add, tooltip: tr('新建标签页'), onTap: () => app.newTab()),
       _ChromeButton(icon: Icons.web_asset_outlined, tooltip: tr('配置和连接'), onTap: () => app.showProfileSelector?.call()),
     ];
 
-    if (vertical) {
+    if (widget.vertical) {
+      _revealTarget = null;
       return Container(
         width: 200,
         color: colors.chrome,
         child: Column(children: [
-          if (mac && !app.fullScreen) _DragArea(child: const SizedBox(height: height)),
+          if (mac && !app.fullScreen) _DragArea(child: const SizedBox(height: AppTabBar.height)),
           Expanded(
             child: ReorderableListView.builder(
               buildDefaultDragHandles: false,
@@ -49,44 +64,89 @@ class AppTabBar extends StatelessWidget {
               ),
             ),
           ),
-          Row(children: [...buttons, const Spacer(), const UpdateButton(height: height), _aiButton(app), _settingsButton(app)]),
+          Row(children: [...buttons, const Spacer(), const UpdateButton(height: AppTabBar.height), _aiButton(app), _settingsButton(app)]),
         ]),
       );
     }
 
     final flexible = app.appearance['flexibleTabs'] == true;
     return Container(
-      height: height,
+      height: AppTabBar.height,
       color: colors.chrome,
       child: Row(children: [
-        _DragArea(child: SizedBox(width: trafficLights, height: height)),
-        Flexible(
-          flex: flexible ? 1 : 0,
+        _DragArea(child: SizedBox(width: trafficLights, height: AppTabBar.height)),
+        Expanded(
           child: LayoutBuilder(builder: (context, constraints) {
             final count = app.tabs.length;
-            // 固定的标签页只显示序号和图标，定宽；其余标签页分剩下的宽度
+            // 固定标签定宽；普通标签默认保留标题宽度，铺满模式下最多缩到 90px。
             final pinnedCount = app.tabs.where((tab) => tab.pinned).length;
             final restCount = count - pinnedCount;
             final restWidth = constraints.maxWidth - pinnedCount * _pinnedWidth;
-            final width = restCount == 0 ? 0.0 : (flexible ? restWidth / restCount : (restWidth / restCount).clamp(90.0, 200.0));
-            return ReorderableListView.builder(
-              scrollDirection: Axis.horizontal,
-              buildDefaultDragHandles: false,
-              shrinkWrap: true,
-              itemCount: count,
-              onReorderItem: app.moveTab,
-              proxyDecorator: (child, index, animation) => Material(color: Colors.transparent, child: child),
-              itemBuilder: (context, index) => ReorderableDragStartListener(
-                key: ValueKey(app.tabs[index].key),
-                index: index,
-                child: SizedBox(width: app.tabs[index].pinned ? _pinnedWidth : width, child: _TabItem(tab: app.tabs[index], index: index, vertical: false)),
+            final width = flexible && restCount > 0 ? (restWidth / restCount).clamp(90.0, double.infinity) : 200.0;
+            final contentWidth = pinnedCount * _pinnedWidth + restCount * width;
+            final activeTab = app.activeTab;
+            if (activeTab != null) {
+              var start = 0.0;
+              for (final tab in app.tabs) {
+                if (tab == activeTab) break;
+                start += tab.pinned ? _pinnedWidth : width;
+              }
+              final target = (
+                key: activeTab.key,
+                start: start,
+                width: activeTab.pinned ? _pinnedWidth : width,
+                viewport: constraints.maxWidth,
+              );
+              // 只在当前标签或其位置、尺寸变化时跟随，手动浏览其他标签不会被拉回。
+              if (_revealTarget != target) {
+                _revealTarget = target;
+                WidgetsBinding.instance.addPostFrameCallback((_) {
+                  if (!mounted || _revealTarget != target || !_scrollController.hasClients) return;
+                  final position = _scrollController.position;
+                  var offset = position.pixels;
+                  if (target.start < offset) {
+                    offset = target.start;
+                  } else if (target.start + target.width > offset + target.viewport) {
+                    offset = target.start + target.width - target.viewport;
+                  }
+                  // 列表尚未构建末尾标签时，maxScrollExtent 可能只是估算值。
+                  final maxOffset = (contentWidth - target.viewport).clamp(0.0, double.infinity);
+                  _scrollController.jumpTo(offset.clamp(0.0, maxOffset));
+                });
+              }
+            } else {
+              _revealTarget = null;
+            }
+            return Listener(
+              onPointerSignal: (event) {
+                if (event is! PointerScrollEvent || event.scrollDelta.dx != 0 || event.scrollDelta.dy == 0) return;
+                if (!_scrollController.hasClients || _scrollController.position.maxScrollExtent == 0) return;
+                GestureBinding.instance.pointerSignalResolver.register(event, (_) {
+                  if (!_scrollController.hasClients) return;
+                  _scrollController.position.pointerScroll(event.scrollDelta.dy);
+                  event.respond(allowPlatformDefault: false);
+                });
+              },
+              child: ReorderableListView.builder(
+                scrollController: _scrollController,
+                scrollDirection: Axis.horizontal,
+                buildDefaultDragHandles: false,
+                itemCount: count,
+                itemExtentBuilder: (index, dimensions) => app.tabs[index].pinned ? _pinnedWidth : width,
+                onReorderItem: app.moveTab,
+                footer: _DragArea(child: SizedBox(width: (constraints.maxWidth - contentWidth).clamp(0.0, double.infinity), height: AppTabBar.height)),
+                proxyDecorator: (child, index, animation) => Material(color: Colors.transparent, child: child),
+                itemBuilder: (context, index) => ReorderableDragStartListener(
+                  key: ValueKey(app.tabs[index].key),
+                  index: index,
+                  child: SizedBox(width: app.tabs[index].pinned ? _pinnedWidth : width, child: _TabItem(tab: app.tabs[index], index: index, vertical: false)),
+                ),
               ),
             );
           }),
         ),
         ...buttons,
-        Expanded(flex: flexible ? 0 : 1, child: _DragArea(child: const SizedBox(height: height))),
-        const UpdateButton(height: height),
+        const UpdateButton(height: AppTabBar.height),
         _aiButton(app),
         _settingsButton(app),
         const SizedBox(width: 4),
