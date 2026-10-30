@@ -1,6 +1,6 @@
 name: Release
 
-# 推 v* 标签时构建 macOS DMG 与 Windows zip，并创建 GitHub Release 草稿。
+# 推 v* 标签时构建 macOS DMG 与 Windows 安装程序，并创建 GitHub Release 草稿。
 # 可选配置 Developer ID 签名 / Apple 公证 Secrets；缺失时仍生成 ad-hoc 签名、未公证的 DMG。
 on:
   push:
@@ -137,16 +137,19 @@ jobs:
       - name: 构建 Windows
         working-directory: app
         run: flutter build windows --release
-      - name: 打 zip
+      - name: 安装 Inno Setup
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force dist | Out-Null
-          Copy-Item -Recurse app/build/windows/x64/runner/Release dist/CTerminal
-          Compress-Archive -Path dist/CTerminal -DestinationPath "dist/CTerminal-$env:VERSION-windows-x64.zip"
+          if (-not (Test-Path "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe")) {
+            choco install innosetup --yes --no-progress
+          }
+      - name: 打安装包
+        shell: pwsh
+        run: ./app/tool/package_windows.ps1 -Version $env:VERSION
       - uses: actions/upload-artifact@v6
         with:
           name: windows
-          path: dist/*.zip
+          path: dist/*-windows-x64-setup.exe
           if-no-files-found: error
 
   release:

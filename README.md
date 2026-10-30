@@ -19,8 +19,10 @@ CTerminal 是一款面向 macOS 和 Windows 的桌面终端，支持本地命令
 
 ### Windows
 
-1. 从 Releases 下载 Windows `.zip` 并解压整个压缩包。
-2. 打开解压后的 `CTerminal` 文件夹，运行 `CTerminal.exe`。
+1. 从 Releases 下载 Windows 安装程序 `.exe` 并运行。
+2. 按向导完成安装，然后从开始菜单（或桌面快捷方式）启动 CTerminal。
+
+安装到当前用户目录，不需要管理员权限。卸载可在“设置 → 应用 → 已安装的应用”中找到 CTerminal。
 
 
 ## 功能
@@ -85,9 +87,9 @@ CTerminal 是一款面向 macOS 和 Windows 的桌面终端，支持本地命令
 
 这是当前未公证安装包触发的 Gatekeeper 提示。确认安装包来自本项目 Releases 后，按“下载与安装 → macOS”的步骤在“隐私与安全性”中手动允许打开。
 
-**Windows ZIP 是源码吗？**
+**Windows 安装时提示“Windows 已保护你的电脑”，怎么办？**
 
-不是。它包含运行程序所需的发布文件。解压完整 ZIP 后运行其中的 `CTerminal.exe`；源码可以通过本仓库获取。
+安装包暂未做数字签名，SmartScreen 会对新下载的程序给出提示。确认安装包来自本项目 Releases 后，点“更多信息 → 仍要运行”。
 
 **从哪里报告问题？**
 
